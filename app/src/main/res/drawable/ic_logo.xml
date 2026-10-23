@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Logo Generus varian lengkap untuk latar terang (login). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+    <path android:pathData="M50.00,3.00 L62.89,15.89 L81.11,15.89 L81.11,34.11 L94.00,47.00 L81.11,59.89 L81.11,78.11 L62.89,78.11 L50.00,91.00 L37.11,78.11 L18.89,78.11 L18.89,59.89 L6.00,47.00 L18.89,34.11 L18.89,15.89 L37.11,15.89 Z" android:strokeColor="#C8A45C" android:strokeWidth="5" android:strokeLineJoin="miter" />
+    <path android:pathData="M50,22C52,29 59,33 65,38C71,43 71,51 67,56L69,56L69,92L31,92L31,56L33,56C29,51 29,43 35,38C41,33 48,29 50,22Z M42.5,92L42.5,72C42.5,66.5 46,63 50,60C54,63 57.5,66.5 57.5,72L57.5,92Z" android:strokeColor="#F6F3EC" android:strokeWidth="7" android:strokeLineJoin="round" android:fillColor="#F6F3EC" />
+    <path android:pathData="M50,22C52,29 59,33 65,38C71,43 71,51 67,56L69,56L69,92L31,92L31,56L33,56C29,51 29,43 35,38C41,33 48,29 50,22Z M42.5,92L42.5,72C42.5,66.5 46,63 50,60C54,63 57.5,66.5 57.5,72L57.5,92Z" android:fillColor="#1A4A39" android:fillType="evenOdd" />
+    <path android:pathData="M48.9,17.5h2.2v5.5h-2.2z" android:fillColor="#1A4A39" />
+    <path android:pathData="M51.6,8.2a4.3,4.3 0,1 0,0 7.6a3.4,3.4 0,1 1,0 -7.6z" android:fillColor="#C8A45C" />
+</vector>

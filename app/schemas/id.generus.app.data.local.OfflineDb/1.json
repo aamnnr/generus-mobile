@@ -1,0 +1,219 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "b10aa5977cdd21e3357aae763a362eb3",
+    "entities": [
+      {
+        "tableName": "outbox",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`agendaId` TEXT NOT NULL, `generusId` TEXT NOT NULL, `status` TEXT NOT NULL, `mode` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, `attempts` INTEGER NOT NULL, `error` TEXT, PRIMARY KEY(`agendaId`, `generusId`))",
+        "fields": [
+          {
+            "fieldPath": "agendaId",
+            "columnName": "agendaId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generusId",
+            "columnName": "generusId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mode",
+            "columnName": "mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "error",
+            "columnName": "error",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "agendaId",
+            "generusId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_outbox_agendaId",
+            "unique": false,
+            "columnNames": [
+              "agendaId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_outbox_agendaId` ON `${TABLE_NAME}` (`agendaId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "roster",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`agendaId` TEXT NOT NULL, `generusId` TEXT NOT NULL, `name` TEXT NOT NULL, `gender` TEXT NOT NULL, `kelompok` TEXT NOT NULL, `desa` TEXT NOT NULL, `tokenHash` TEXT, `status` TEXT, PRIMARY KEY(`agendaId`, `generusId`))",
+        "fields": [
+          {
+            "fieldPath": "agendaId",
+            "columnName": "agendaId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generusId",
+            "columnName": "generusId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "gender",
+            "columnName": "gender",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kelompok",
+            "columnName": "kelompok",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "desa",
+            "columnName": "desa",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tokenHash",
+            "columnName": "tokenHash",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "agendaId",
+            "generusId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_roster_agendaId_tokenHash",
+            "unique": false,
+            "columnNames": [
+              "agendaId",
+              "tokenHash"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_roster_agendaId_tokenHash` ON `${TABLE_NAME}` (`agendaId`, `tokenHash`)"
+          }
+        ]
+      },
+      {
+        "tableName": "scan_agendas",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `unitName` TEXT NOT NULL, `level` TEXT NOT NULL, `startsAt` INTEGER NOT NULL, `endsAt` INTEGER NOT NULL, `lateAfter` INTEGER NOT NULL, `lockedAt` INTEGER, `cancelledAt` INTEGER, `downloadedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "unitName",
+            "columnName": "unitName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "level",
+            "columnName": "level",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startsAt",
+            "columnName": "startsAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endsAt",
+            "columnName": "endsAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lateAfter",
+            "columnName": "lateAfter",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lockedAt",
+            "columnName": "lockedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "cancelledAt",
+            "columnName": "cancelledAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "downloadedAt",
+            "columnName": "downloadedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b10aa5977cdd21e3357aae763a362eb3')"
+    ]
+  }
+}
