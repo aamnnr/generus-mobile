@@ -77,9 +77,14 @@ abstract class LoadVm<T>(protected val c: AppContainer, private val cache: Cache
 
     protected abstract suspend fun fetch(): T
 
-    fun load() {
+    fun load() = load(quiet = false)
+
+    /** Muat ulang tanpa indikator (pembaruan berkala); data lama tetap tampil bila gagal. */
+    fun refreshQuietly() = load(quiet = true)
+
+    private fun load(quiet: Boolean) {
         loadJob?.cancel()
-        _state.update { it.copy(loading = true, error = null) }
+        if (!quiet) _state.update { it.copy(loading = true, error = null) }
         loadJob = viewModelScope.launch {
             try {
                 val data = fetch()

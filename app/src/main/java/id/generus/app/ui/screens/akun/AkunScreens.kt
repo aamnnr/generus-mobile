@@ -157,7 +157,7 @@ fun LainnyaScreen(nav: NavHostController) {
             )
             item {
                 Text(
-                    "Generus ${BuildConfig.VERSION_NAME} · server ${if (BuildConfig.FEATURE_KURIKULUM) "dengan modul kurikulum" else "Tahap 1"}",
+                    "${id.generus.app.core.Brand.name} ${BuildConfig.VERSION_NAME} · server ${if (BuildConfig.FEATURE_KURIKULUM) "dengan modul kurikulum" else "Tahap 1"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 4.dp),

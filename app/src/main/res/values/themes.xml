@@ -2,7 +2,7 @@
 <resources>
     <!-- Tema jendela sebelum Compose tampil: latar krem, tanpa action bar. -->
     <style name="Theme.Generus" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/cream_100</item>
+        <item name="android:windowBackground">@color/window_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>

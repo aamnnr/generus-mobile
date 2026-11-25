@@ -80,6 +80,9 @@ import id.generus.app.ui.components.AppCard
 import id.generus.app.ui.components.Avatar
 import id.generus.app.ui.components.BannerTone
 import id.generus.app.ui.components.EightStar
+import id.generus.app.ui.components.KliikAccent
+import id.generus.app.ui.components.heroBackground
+import id.generus.app.ui.components.kliikMotif
 import id.generus.app.ui.components.ErrorBox
 import id.generus.app.ui.components.IconTile
 import id.generus.app.ui.components.InfoBanner
@@ -114,6 +117,8 @@ data class BerandaData(
     val beranda: Beranda?,
     val period: Period?,
     val rekap: RekapUnit?,
+    /** Generus aktif per jenjang, urut jenjang. */
+    val perJenjang: List<id.generus.app.data.model.JenjangCount> = emptyList(),
     /** Data dari cache karena offline. */
     val offline: Boolean = false,
 )
@@ -127,12 +132,13 @@ class BerandaVm(c: AppContainer, private val me: Me) : LoadVm<BerandaData>(c, Ca
     override suspend fun fetch(): BerandaData {
         runCatching { c.agenda.lockDue() }
         val beranda = c.agenda.beranda()
-        if (!kurikulumEnabled) return BerandaData(beranda, null, null)
+        val perJenjang = if (me.canReadGenerus) runCatching { c.agenda.countPerJenjang() }.getOrDefault(emptyList()) else emptyList()
+        if (!kurikulumEnabled) return BerandaData(beranda, null, null, perJenjang)
         val period = pickActivePeriod(c.kurikulum.periods(), today())
         // Rekap capaian unit tertinggi user (atau kelompoknya), semua jenjang.
         val unit = me.rekapRootUnit()?.unitId ?: me.roles.firstOrNull { it.level == UnitLevel.kelompok && it.role != AppRole.kurikulum }?.unitId
         val rekap = if (period != null && unit != null) runCatching { c.capaian.rekapUnits(period.id, null, listOf(unit)).firstOrNull() }.getOrNull() else null
-        return BerandaData(beranda, period, rekap)
+        return BerandaData(beranda, period, rekap, perJenjang)
     }
 }
 
@@ -225,18 +231,27 @@ fun BerandaScreen(nav: NavHostController) {
                     }
                     if (reader && data.beranda != null) {
                         item {
+                            // Generus aktif + satu kotak per jenjang (termasuk yang kosong), 2 kolom.
                             val counts = data.beranda.counts
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                StatBox("Generus aktif", counts.total.formatId(), Modifier.weight(1f))
-                                StatBox("Pra Remaja", counts.praRemaja.formatId(), Modifier.weight(1f))
-                                StatBox("Remaja", counts.remaja.formatId(), Modifier.weight(1f))
+                            val stats = if (data.perJenjang.isNotEmpty()) {
+                                listOf("Generus aktif" to data.perJenjang.sumOf { it.n }) + data.perJenjang.map { it.name to it.n }
+                            } else {
+                                listOf("Generus aktif" to counts.total, "Pra Remaja" to counts.praRemaja, "Remaja" to counts.remaja)
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                stats.chunked(2).forEach { row ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        row.forEach { (title, n) -> StatBox(title, n.formatId(), Modifier.weight(1f)) }
+                                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                                    }
+                                }
                             }
                         }
                     }
                     if (writer) {
                         item {
                             Row(
-                                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.secondaryContainer).padding(horizontal = 16.dp, vertical = 14.dp),
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.secondaryContainer).kliikMotif().padding(horizontal = 16.dp, vertical = 14.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
@@ -262,6 +277,7 @@ fun HeroAgenda.ongoing(now: Instant = Instant.now()): Boolean = !startsAt.isAfte
 private fun Greeting(me: Me, onAvatar: () -> Unit) {
     Row(verticalAlignment = Alignment.Top) {
         Column(Modifier.weight(1f)) {
+            KliikAccent()
             Text("Assalamu'alaikum,", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(me.name, style = MaterialTheme.typography.displaySmall)
             Spacer(Modifier.height(8.dp))
@@ -280,8 +296,7 @@ private fun HeroCard(hero: HeroAgenda?, writer: Boolean, onOpen: (String) -> Uni
     val x = GenerusTheme.extra
     val white = x.heroForeground
     Box(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-            .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(x.hero, id.generus.app.ui.theme.Palette.Green900))),
+        Modifier.fillMaxWidth().heroBackground(),
     ) {
         MosqueSilhouette(white.copy(alpha = 0.10f), Modifier.align(Alignment.TopEnd).padding(top = 8.dp).width(190.dp).height(114.dp))
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -293,7 +308,7 @@ private fun HeroCard(hero: HeroAgenda?, writer: Boolean, onOpen: (String) -> Uni
             }
             val ongoing = hero.ongoing()
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (ongoing) Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF9FD8B8)))
+                if (ongoing) Box(Modifier.size(8.dp).clip(CircleShape).background(x.live))
                 Overline("${if (ongoing) "Sedang berlangsung" else "Agenda berikutnya"} · ${hero.level.label}", color = white.copy(alpha = 0.8f))
             }
             Column {

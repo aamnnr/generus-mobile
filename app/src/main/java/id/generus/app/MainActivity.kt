@@ -1,5 +1,6 @@
 package id.generus.app
 
+import androidx.compose.ui.graphics.luminance
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -118,8 +119,18 @@ private fun Root() {
 
 @Composable
 private fun Splash() = Centered {
-    Image(painterResource(R.drawable.ic_logo), contentDescription = null, modifier = Modifier.size(96.dp))
-    Text("Generus", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+    if (id.generus.app.core.Brand.isKliik) {
+        val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+        Image(
+            painterResource(if (dark) R.drawable.kliik_logo_putih else R.drawable.kliik_logo),
+            contentDescription = id.generus.app.core.Brand.fullName,
+            modifier = Modifier.fillMaxWidth(0.72f),
+            contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
+        )
+    } else {
+        Image(painterResource(R.drawable.ic_logo), contentDescription = null, modifier = Modifier.size(96.dp))
+        Text("Generus", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+    }
 }
 
 @Composable

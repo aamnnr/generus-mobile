@@ -1,5 +1,7 @@
 package id.generus.app.ui.screens.capaian
 
+import id.generus.app.ui.components.UnitPickerField
+import id.generus.app.data.model.TreeUnit
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -76,6 +78,7 @@ data class CapaianSelection(val periodId: String? = null, val kelompokId: String
 data class CapaianHomeData(
     val periods: List<Period>,
     val kelompok: List<ScopeUnit>,
+    val kelompokTree: List<TreeUnit>,
     val jenjang: List<Jenjang>,
     val period: Period?,
     val selectedKelompok: ScopeUnit?,
@@ -91,23 +94,25 @@ class CapaianHomeVm(c: AppContainer, private val writer: Boolean) : LoadVm<Capai
 
     init { load() }
 
+    private suspend fun tree(units: List<ScopeUnit>) = if (units.size > 1) c.units.tree(units.map { it.id }) else emptyList()
+
     override suspend fun fetch(): CapaianHomeData {
         val (periods, units, jenjang) = base ?: Triple(
             c.kurikulum.periods().filter { it.publishedAt != null },
             c.generus.scopeUnits(if (writer) "write" else "read").filter { it.level == id.generus.app.data.model.UnitLevel.kelompok },
-            c.agenda.jenjang(),
+            c.agenda.jenjang(kegiatan = true),
         ).also { base = it }
         val sel = selection.value
         val period = periods.firstOrNull { it.id == sel.periodId } ?: pickActivePeriod(periods, today())
         val kelompok = units.firstOrNull { it.id == sel.kelompokId } ?: units.firstOrNull()
         val current = jenjang.firstOrNull { it.id == sel.jenjangId } ?: jenjang.firstOrNull { it.name == "Remaja" } ?: jenjang.firstOrNull()
         if (period == null || kelompok == null || current == null) {
-            return CapaianHomeData(periods, units, jenjang, period, kelompok, current, emptyList(), emptyMap(), emptyMap())
+            return CapaianHomeData(periods, units, tree(units), jenjang, period, kelompok, current, emptyList(), emptyMap(), emptyMap())
         }
         val targets = c.kurikulum.targets(period.id, current.id)
         val summary = if (targets.isEmpty()) null else c.capaian.kelompokSummary(period.id, current.id, kelompok.id)
         return CapaianHomeData(
-            periods, units, jenjang, period, kelompok, current, targets,
+            periods, units, tree(units), jenjang, period, kelompok, current, targets,
             summary?.counts.orEmpty().associateBy { it.id },
             summary?.deliveries.orEmpty().associateBy { it.targetId },
         )
@@ -202,7 +207,7 @@ private fun Selectors(d: CapaianHomeData, model: CapaianHomeVm) {
             SelectField("Periode", d.periods, d.period, { "Periode ${it.name}" }, { model.select(model.selection.value.copy(periodId = it.id)) })
         }
         if (d.kelompok.size > 1) {
-            SelectField("Kelompok", d.kelompok, d.selectedKelompok, { "Kelompok ${it.name}" }, { model.select(model.selection.value.copy(kelompokId = it.id)) }, group = { "Desa ${it.desaName}" })
+            UnitPickerField("Kelompok", d.kelompokTree, d.selectedKelompok?.id, { id -> model.select(model.selection.value.copy(kelompokId = id)) })
         }
         if (d.selectedJenjang != null) {
             ChipRow(d.jenjang, d.selectedJenjang, { it.name }, { model.select(model.selection.value.copy(jenjangId = it.id)) })

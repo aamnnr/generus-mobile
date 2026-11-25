@@ -23,6 +23,7 @@ import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import id.generus.app.R
+import id.generus.app.core.Brand
 import id.generus.app.data.model.AttendanceStatus
 import id.generus.app.data.model.CapaianStatus
 
@@ -50,6 +51,30 @@ object Palette {
     val Brass100 = Color(0xFFF3EAD9)
 }
 
+/** Warna merek KLIIK JM (generus/src/app/globals.css `:root.brand-kliik`, oklch → sRGB). */
+object Kliik {
+    val Navy = Color(0xFF1A2189)
+    val Cyan = Color(0xFF008CD7)
+    val Background = Color(0xFFF4F7FB)
+    val Ink = Color(0xFF181E32)
+    val Secondary = Color(0xFFE0ECFC)
+    val Muted = Color(0xFFE6ECF3)
+    val MutedInk = Color(0xFF5B6375)
+    val Accent = Color(0xFFD8EFFF)
+    val AccentInk = Color(0xFF005998)
+    val Border = Color(0xFFD8DFE8)
+    val Live = Color(0xFF63CBFE)
+    val DarkBackground = Color(0xFF0C1021)
+    val DarkInk = Color(0xFFEAEFF5)
+    val DarkCard = Color(0xFF151B32)
+    val DarkPrimary = Color(0xFF52ADEF)
+    val DarkMuted = Color(0xFF1F2742)
+    val DarkMutedInk = Color(0xFFA0ACBE)
+    val DarkAccent = Color(0xFF203351)
+    val DarkAccentInk = Color(0xFFA0D5FE)
+    val DarkBorder = Color(0xFF2B344F)
+}
+
 /** Warna status presensi & capaian: warna penuh (teks putih lolos AA) + latar lembut badge. */
 @Immutable
 data class StatusColor(val solid: Color, val soft: Color)
@@ -69,6 +94,12 @@ data class Extra(
     val izin: StatusColor,
     val sakit: StatusColor,
     val alpa: StatusColor,
+    /** Ujung gradasi kartu hero. */
+    val heroDeep: Color = Color(0xFF133A2C),
+    /** Titik "Langsung" / sedang berlangsung. */
+    val live: Color = Color(0xFF8FD6AC),
+    /** Warna bayangan kartu. */
+    val shadow: Color = Palette.Green950,
 )
 
 private val LightExtra = Extra(
@@ -98,6 +129,95 @@ private val DarkExtra = LightExtra.copy(
     izin = StatusColor(Color(0xFF356C8C), Color(0xFF1C2E3A)),
     sakit = StatusColor(Color(0xFF76558A), Color(0xFF30263A)),
     alpa = StatusColor(Color(0xFFB2392F), Color(0xFF3E2220)),
+)
+
+// KLIIK JM: Izin teal agar tidak tertukar dengan biru merek; status lain tetap.
+private val KliikLightExtra = LightExtra.copy(
+    hero = Kliik.Navy,
+    heroDeep = Color(0xFF141A6B),
+    tile = Kliik.Muted,
+    brass = Kliik.Cyan,
+    brassText = Kliik.AccentInk,
+    brassSoft = Kliik.Accent,
+    track = Kliik.Secondary,
+    bar = Kliik.Navy,
+    izin = StatusColor(Color(0xFF007976), Color(0xFFDBF3F1)),
+    live = Kliik.Live,
+    shadow = Kliik.Navy,
+)
+
+private val KliikDarkExtra = KliikLightExtra.copy(
+    tile = Kliik.DarkMuted,
+    brassText = Kliik.DarkAccentInk,
+    brassSoft = Kliik.DarkAccent,
+    track = Kliik.DarkMuted,
+    bar = Kliik.DarkPrimary,
+    hadir = DarkExtra.hadir,
+    terlambat = DarkExtra.terlambat,
+    izin = StatusColor(Color(0xFF007976), Color(0xFF173938)),
+    sakit = DarkExtra.sakit,
+    alpa = DarkExtra.alpa,
+)
+
+private val KliikLightColors = lightColorScheme(
+    primary = Kliik.Navy,
+    onPrimary = Color.White,
+    primaryContainer = Kliik.Secondary,
+    onPrimaryContainer = Kliik.Navy,
+    secondary = Kliik.Cyan,
+    onSecondary = Color.White,
+    secondaryContainer = Kliik.Secondary,
+    onSecondaryContainer = Kliik.Navy,
+    tertiary = Kliik.AccentInk,
+    tertiaryContainer = Kliik.Accent,
+    onTertiaryContainer = Kliik.AccentInk,
+    background = Kliik.Background,
+    onBackground = Kliik.Ink,
+    surface = Color.White,
+    onSurface = Kliik.Ink,
+    surfaceVariant = Kliik.Muted,
+    onSurfaceVariant = Kliik.MutedInk,
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color(0xFFFAFCFE),
+    surfaceContainer = Color.White,
+    surfaceContainerHigh = Color(0xFFFAFCFE),
+    surfaceContainerHighest = Kliik.Muted,
+    outline = Kliik.Border,
+    outlineVariant = Kliik.Border,
+    error = Color(0xFFB2392F),
+    onError = Color.White,
+    errorContainer = Color(0xFFF6E2DF),
+    onErrorContainer = Color(0xFFB2392F),
+)
+
+private val KliikDarkColors = darkColorScheme(
+    primary = Kliik.DarkPrimary,
+    onPrimary = Kliik.DarkBackground,
+    primaryContainer = Kliik.DarkMuted,
+    onPrimaryContainer = Kliik.DarkInk,
+    secondary = Kliik.DarkPrimary,
+    secondaryContainer = Kliik.DarkMuted,
+    onSecondaryContainer = Kliik.DarkInk,
+    tertiary = Kliik.DarkAccentInk,
+    tertiaryContainer = Kliik.DarkAccent,
+    onTertiaryContainer = Kliik.DarkAccentInk,
+    background = Kliik.DarkBackground,
+    onBackground = Kliik.DarkInk,
+    surface = Kliik.DarkCard,
+    onSurface = Kliik.DarkInk,
+    surfaceVariant = Kliik.DarkMuted,
+    onSurfaceVariant = Kliik.DarkMutedInk,
+    surfaceContainerLowest = Kliik.DarkCard,
+    surfaceContainerLow = Kliik.DarkCard,
+    surfaceContainer = Kliik.DarkCard,
+    surfaceContainerHigh = Kliik.DarkMuted,
+    surfaceContainerHighest = Kliik.DarkMuted,
+    outline = Kliik.DarkBorder,
+    outlineVariant = Kliik.DarkBorder,
+    error = Color(0xFFE07A70),
+    onError = Kliik.DarkBackground,
+    errorContainer = Color(0xFF3E2220),
+    onErrorContainer = Color(0xFFE07A70),
 )
 
 private val LightColors = lightColorScheme(
@@ -169,10 +289,12 @@ private fun jakarta(weight: Int) = Font(
 
 val Sans = FontFamily(jakarta(400), jakarta(500), jakarta(600), jakarta(700))
 
-/** Lora: hanya sapaan beranda, angka besar, judul login. */
-val Display = FontFamily(
-    Font(R.font.lora, weight = FontWeight.SemiBold, variationSettings = FontVariation.Settings(FontVariation.weight(600))),
-)
+/** Lora: hanya sapaan beranda, angka besar, judul login. KLIIK JM memakai Plus Jakarta Sans juga untuk judul. */
+val Display = if (Brand.isKliik) {
+    FontFamily(jakarta(700))
+} else {
+    FontFamily(Font(R.font.lora, weight = FontWeight.SemiBold, variationSettings = FontVariation.Settings(FontVariation.weight(600))))
+}
 
 /** Amiri untuk teks Arab (materi, doa, dalil). */
 val Arabic = FontFamily(Font(R.font.amiri_regular, FontWeight.Normal), Font(R.font.amiri_bold, FontWeight.Bold))
@@ -225,14 +347,22 @@ fun Extra.of(status: AttendanceStatus): StatusColor = when (status) {
 fun Extra.of(status: CapaianStatus): StatusColor = when (status) {
     CapaianStatus.tuntas -> hadir
     CapaianStatus.proses -> terlambat
-    CapaianStatus.belum -> StatusColor(Palette.Ink600, tile)
+    CapaianStatus.belum -> StatusColor(if (Brand.isKliik) Kliik.MutedInk else Palette.Ink600, tile)
 }
 
 @Composable
 fun GenerusTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalExtra provides if (dark) DarkExtra else LightExtra) {
+    val extra = when {
+        Brand.isKliik -> if (dark) KliikDarkExtra else KliikLightExtra
+        else -> if (dark) DarkExtra else LightExtra
+    }
+    val colors = when {
+        Brand.isKliik -> if (dark) KliikDarkColors else KliikLightColors
+        else -> if (dark) DarkColors else LightColors
+    }
+    CompositionLocalProvider(LocalExtra provides extra) {
         MaterialTheme(
-            colorScheme = if (dark) DarkColors else LightColors,
+            colorScheme = colors,
             typography = AppTypography,
             shapes = AppShapes,
             content = content,

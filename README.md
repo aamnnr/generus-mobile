@@ -54,7 +54,12 @@ APK: `app/build/outputs/apk/uji/debug/app-uji-debug.apk`. Flavor:
 | `uji` | server uji | aktif | `id.generus.app.uji` |
 | `resmi` | server resmi | mengikuti `RESMI_FEATURE_KURIKULUM` (bawaan mati, Tahap 1) | `id.generus.app` |
 
-Keduanya bisa terpasang berdampingan. `./gradlew assembleResmiRelease` membuat APK rilis
+Keduanya bisa terpasang berdampingan.
+
+**Merek tampilan** (sama dengan `NEXT_PUBLIC_BRAND` di PWA): bawaan **KLIIK JM** (navy + cyan,
+logo klien, kartu QR baru). Desain lama: tambahkan `-Pbrand=generus`, mis.
+`./gradlew assembleResmiRelease -Pbrand=generus`. Ikon peluncur & warna jendela per merek ada di
+`app/src/brand/<merek>/res`; logo KLIIK JM dibuat dari `generus/docs/brand/kliik-jm`. `./gradlew assembleResmiRelease` membuat APK rilis
 (R8); tanpa keystore rilis, APK ditandatangani kunci debug — siapkan keystore sendiri sebelum
 dibagikan luas / Play Store.
 

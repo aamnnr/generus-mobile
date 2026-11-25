@@ -78,7 +78,7 @@ class RekapVm(c: AppContainer, private val rootUnitId: String, private val unitI
 
     override suspend fun fetch(): RekapData {
         val periods = c.kurikulum.periods().filter { it.publishedAt != null }
-        val jenjang = c.agenda.jenjang()
+        val jenjang = c.agenda.jenjang(kegiatan = true)
         val tree = c.capaian.unitWithChildren(unitId ?: rootUnitId)
         val unit = tree.firstOrNull { it.rel == "self" } ?: throw UserError("Unit tidak ditemukan.")
         val ancestors = tree.filter { it.rel == "anc" }

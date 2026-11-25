@@ -45,6 +45,8 @@ import androidx.navigation.NavHostController
 import id.generus.app.AppContainer
 import id.generus.app.core.UserError
 import id.generus.app.core.formatId
+import id.generus.app.data.UnitRef
+import id.generus.app.data.buildUnitTree
 import id.generus.app.data.model.Account
 import id.generus.app.data.model.AppRole
 import id.generus.app.data.model.UnitLevel
@@ -80,6 +82,7 @@ import id.generus.app.ui.components.SelectField
 import id.generus.app.ui.components.StatusBadge
 import id.generus.app.ui.components.StickyBottom
 import id.generus.app.ui.components.TextInput
+import id.generus.app.ui.components.UnitPickerField
 import id.generus.app.ui.nav.AkunBaru
 import id.generus.app.ui.nav.AkunDetail
 import id.generus.app.ui.nav.LocalMe
@@ -99,11 +102,18 @@ import kotlinx.coroutines.launch
 class WilayahVm(c: AppContainer) : LoadVm<List<WilayahUnit>>(c) {
     init { load() }
 
-    override suspend fun fetch() = c.admin.wilayah()
+    override suspend fun fetch() = c.admin.wilayah().also { c.units.invalidate() }
+
 
     fun add(parentId: String, level: UnitLevel, name: String, onError: (String) -> Unit, onOk: () -> Unit) = run(onError, { load(); onOk() }) {
         validName(name)
         c.admin.addUnit(parentId, level, name.trim())
+    }
+
+    /** Hanya superadmin sistem; pembuatnya langsung menjadi superadmin daerah baru (padanan PWA). */
+    fun addDaerah(userId: String, name: String, onError: (String) -> Unit, onOk: () -> Unit) = run(onError, { c.session.refresh(); load(); onOk() }) {
+        validName(name)
+        c.admin.addDaerah(userId, name.trim())
     }
 
     fun rename(id: String, name: String, onError: (String) -> Unit, onOk: () -> Unit) = run(onError, { load(); onOk() }) {
@@ -122,6 +132,7 @@ class WilayahVm(c: AppContainer) : LoadVm<List<WilayahUnit>>(c) {
 }
 
 private sealed interface WilayahSheet {
+    data object AddDaerah : WilayahSheet
     data class Add(val parent: WilayahUnit, val level: UnitLevel) : WilayahSheet
     data class Rename(val unit: WilayahUnit) : WilayahSheet
     data class Delete(val unit: WilayahUnit) : WilayahSheet
@@ -130,6 +141,7 @@ private sealed interface WilayahSheet {
 /** Pohon wilayah daerah → desa → kelompok (padanan /admin/wilayah, superadmin). */
 @Composable
 fun AdminWilayahScreen(nav: NavHostController) {
+    val me = LocalMe.current
     val toast = LocalToast.current
     val model = vm { WilayahVm(it) }
     val state by model.state.collectAsStateWithLifecycle()
@@ -143,57 +155,73 @@ fun AdminWilayahScreen(nav: NavHostController) {
                 all == null && state.error != null -> item { ErrorBox(state.error!!, model::load) }
                 all == null -> item { LoadingBox() }
                 else -> {
-                    val daerah = all.firstOrNull { it.level == UnitLevel.daerah }
-                    if (daerah == null) {
-                        item { EmptyState("Belum ada daerah", body = "Daerah dibuat saat penyiapan server (pnpm resmi:setup).") }
-                        return@RefreshableList
-                    }
-                    val desa = all.filter { it.parentId == daerah.id }.sortedBy { it.name }
+                    val own = me.roles.filter { it.role == AppRole.superadmin }.map { it.unitId }.toSet()
+                    val daerahList = all.filter { it.level == UnitLevel.daerah && (me.isSystemAdmin || it.id in own) }.sortedBy { it.name }
                     val count = { u: WilayahUnit -> if (u.level == UnitLevel.kelompok) u.generusAktif else all.filter { it.parentId == u.id }.sumOf { it.generusAktif } }
-                    item {
+                    if (me.isSystemAdmin) item {
                         AppCard(Modifier.fillMaxWidth()) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("Daerah ${daerah.name}", style = MaterialTheme.typography.titleMedium)
-                                    Text("${desa.size} desa · ${desa.sumOf(count).formatId()} generus aktif", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                IconButton(onClick = { sheet = WilayahSheet.Rename(daerah) }) { Icon(Icons.Rounded.Edit, contentDescription = "Ubah nama daerah") }
-                            }
-                            SecondaryButton("Tambah desa", onClick = { sheet = WilayahSheet.Add(daerah, UnitLevel.desa) }, icon = Icons.Rounded.Add)
+                            Text("Tambah daerah", style = MaterialTheme.typography.titleMedium)
+                            Text("Hanya superadmin sistem. Desa & kelompok lalu ditambahkan di kartu daerahnya.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            SecondaryButton("Tambah daerah", onClick = { sheet = WilayahSheet.AddDaerah }, icon = Icons.Rounded.Add)
                         }
                     }
-                    desa.forEach { ds ->
-                        val open = ds.id in expanded
-                        val kelompok = all.filter { it.parentId == ds.id }.sortedBy { it.name }
-                        item(key = ds.id) {
-                            ListCard {
-                                ListRow(
-                                    "Desa ${ds.name}",
-                                    meta = "${kelompok.size} kelompok · ${count(ds).formatId()} generus aktif",
-                                    trailing = { Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null) },
-                                    chevron = false,
-                                    onClick = { expanded = if (open) expanded - ds.id else expanded + ds.id },
-                                )
-                                if (open) {
-                                    kelompok.forEach { k ->
-                                        RowDivider()
-                                        ListRow(
-                                            "Kelompok ${k.name}",
-                                            meta = "${k.generusAktif.formatId()} generus aktif",
-                                            trailing = {
-                                                Row {
-                                                    IconButton(onClick = { sheet = WilayahSheet.Rename(k) }) { Icon(Icons.Rounded.Edit, contentDescription = "Ubah nama ${k.name}") }
-                                                    IconButton(onClick = { sheet = WilayahSheet.Delete(k) }) { Icon(Icons.Rounded.Delete, contentDescription = "Hapus ${k.name}", tint = MaterialTheme.colorScheme.error) }
-                                                }
-                                            },
-                                            chevron = false,
-                                        )
+                    if (daerahList.isEmpty()) item { EmptyState("Belum ada daerah di lingkup Anda") }
+                    daerahList.forEach { daerah ->
+                        val desa = all.filter { it.parentId == daerah.id }.sortedBy { it.name }
+                        val desaCount = desa.sumOf { count(it) }
+                        val kelCount = desa.sumOf { d -> all.count { it.parentId == d.id } }
+                        item(key = daerah.id) {
+                            AppCard(Modifier.fillMaxWidth()) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Daerah ${daerah.name}", style = MaterialTheme.typography.titleMedium)
+                                        Text("${desa.size} desa · $kelCount kelompok · ${desaCount.formatId()} generus aktif", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
-                                    RowDivider()
-                                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        SecondaryButton("Tambah kelompok", onClick = { sheet = WilayahSheet.Add(ds, UnitLevel.kelompok) }, icon = Icons.Rounded.Add, modifier = Modifier.weight(1f))
-                                        IconButton(onClick = { sheet = WilayahSheet.Rename(ds) }) { Icon(Icons.Rounded.Edit, contentDescription = "Ubah nama desa") }
-                                        IconButton(onClick = { sheet = WilayahSheet.Delete(ds) }) { Icon(Icons.Rounded.Delete, contentDescription = "Hapus desa", tint = MaterialTheme.colorScheme.error) }
+                                    if (me.isSystemAdmin) {
+                                        IconButton(onClick = { sheet = WilayahSheet.Rename(daerah) }) { Icon(Icons.Rounded.Edit, contentDescription = "Ubah nama daerah") }
+                                        if (desa.isEmpty()) IconButton(onClick = { sheet = WilayahSheet.Delete(daerah) }) { Icon(Icons.Rounded.Delete, contentDescription = "Hapus daerah", tint = MaterialTheme.colorScheme.error) }
+                                    }
+                                }
+                                SecondaryButton("Tambah desa", onClick = { sheet = WilayahSheet.Add(daerah, UnitLevel.desa) }, icon = Icons.Rounded.Add)
+                            }
+                        }
+                        desa.forEach { ds ->
+                            val open = ds.id in expanded
+                            val kelompok = all.filter { it.parentId == ds.id }.sortedBy { it.name }
+                            item(key = ds.id) {
+                                ListCard {
+                                    ListRow(
+                                        "Desa ${ds.name}",
+                                        meta = "${kelompok.size} kelompok · ${count(ds).formatId()} generus aktif",
+                                        trailing = { Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null) },
+                                        chevron = false,
+                                        onClick = { expanded = if (open) expanded - ds.id else expanded + ds.id },
+                                    )
+                                    if (open) {
+                                        if (kelompok.isEmpty()) {
+                                            RowDivider()
+                                            Text("Belum ada kelompok.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
+                                        }
+                                        kelompok.forEach { k ->
+                                            RowDivider()
+                                            ListRow(
+                                                "Kelompok ${k.name}",
+                                                meta = "${k.generusAktif.formatId()} generus aktif",
+                                                trailing = {
+                                                    Row {
+                                                        IconButton(onClick = { sheet = WilayahSheet.Rename(k) }) { Icon(Icons.Rounded.Edit, contentDescription = "Ubah nama ${k.name}") }
+                                                        if (k.generusAktif == 0) IconButton(onClick = { sheet = WilayahSheet.Delete(k) }) { Icon(Icons.Rounded.Delete, contentDescription = "Hapus ${k.name}", tint = MaterialTheme.colorScheme.error) }
+                                                    }
+                                                },
+                                                chevron = false,
+                                            )
+                                        }
+                                        RowDivider()
+                                        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            SecondaryButton("Tambah kelompok", onClick = { sheet = WilayahSheet.Add(ds, UnitLevel.kelompok) }, icon = Icons.Rounded.Add, modifier = Modifier.weight(1f))
+                                            IconButton(onClick = { sheet = WilayahSheet.Rename(ds) }) { Icon(Icons.Rounded.Edit, contentDescription = "Ubah nama desa") }
+                                            if (kelompok.isEmpty()) IconButton(onClick = { sheet = WilayahSheet.Delete(ds) }) { Icon(Icons.Rounded.Delete, contentDescription = "Hapus desa", tint = MaterialTheme.colorScheme.error) }
+                                        }
                                     }
                                 }
                             }
@@ -205,6 +233,9 @@ fun AdminWilayahScreen(nav: NavHostController) {
     }
 
     when (val s = sheet) {
+        WilayahSheet.AddDaerah -> NameSheet("Tambah daerah", "", onDismiss = { sheet = null }) { name ->
+            model.addDaerah(me.id, name, { toast(it) }) { sheet = null; toast("Daerah $name ditambahkan.") }
+        }
         is WilayahSheet.Add -> NameSheet(if (s.level == UnitLevel.desa) "Tambah desa" else "Tambah kelompok di Desa ${s.parent.name}", "", onDismiss = { sheet = null }) { name ->
             model.add(s.parent.id, s.level, name, { toast(it) }) { sheet = null; toast("${s.level.label} $name ditambahkan.") }
         }
@@ -327,28 +358,26 @@ class AkunDetailVm(c: AppContainer, private val id: String) : LoadVm<AkunDetailD
     }
 }
 
-/** Satu unit untuk pilihan peran, berlabel tingkat & induk. */
-private fun unitOptions(units: List<WilayahUnit>): List<WilayahUnit> {
-    val daerah = units.filter { it.level == UnitLevel.daerah }
-    val desa = units.filter { it.level == UnitLevel.desa }.sortedBy { it.name }
-    return daerah + desa.flatMap { d -> listOf(d) + units.filter { it.parentId == d.id }.sortedBy { it.name } }
-}
-
-private fun unitGroup(units: List<WilayahUnit>, u: WilayahUnit): String = when (u.level) {
-    UnitLevel.daerah -> "Daerah"
-    UnitLevel.desa -> "Desa ${u.name}"
-    UnitLevel.kelompok -> "Desa ${units.firstOrNull { it.id == u.parentId }?.name ?: ""}"
-}
-
+/**
+ * Unit yang boleh dipilih untuk peran: hanya di daerah tempat pemanggil superadmin
+ * (superadmin sistem: semua daerah). Tim Kurikulum & superadmin hanya di tingkat daerah (PRD §3).
+ */
 @Composable
-private fun RoleFields(units: List<WilayahUnit>, role: AppRole?, unit: WilayahUnit?, onRole: (AppRole) -> Unit, onUnit: (WilayahUnit) -> Unit) {
-    val options = when (role) {
-        // Tim Kurikulum hanya di tingkat daerah (PRD §3).
-        AppRole.kurikulum, AppRole.superadmin -> units.filter { it.level == UnitLevel.daerah }
-        else -> unitOptions(units)
+private fun RoleFields(units: List<WilayahUnit>, role: AppRole?, unit: String?, onRole: (AppRole) -> Unit, onUnit: (String?) -> Unit) {
+    val me = LocalMe.current
+    val tree = remember(units, role, me) {
+        val own = me.roles.filter { it.role == AppRole.superadmin }.map { it.unitId }.toSet()
+        val daerah = units.filter { it.level == UnitLevel.daerah && (me.isSystemAdmin || it.id in own) }.map { it.id }.toSet()
+        val desa = units.filter { it.parentId in daerah }.map { it.id }.toSet()
+        val inScope = units.filter { it.id in daerah || it.id in desa || it.parentId in desa }
+        val pick = when (role) {
+            AppRole.kurikulum, AppRole.superadmin -> inScope.filter { it.level == UnitLevel.daerah }
+            else -> inScope
+        }
+        buildUnitTree(units.map { UnitRef(it.id, it.name, it.level, it.parentId) }, pick.map { it.id })
     }
     SelectField("Peran", AppRole.entries, role, { it.label }, onRole)
-    SelectField("Unit", options, unit, { "${it.level.label} ${it.name}" }, onUnit, group = { unitGroup(units, it) })
+    UnitPickerField("Unit", tree, unit, onUnit, placeholder = "Pilih unit", enabled = role != null, supporting = if (role == null) "Pilih peran dulu" else null)
 }
 
 @Composable
@@ -431,13 +460,13 @@ fun AkunDetailScreen(nav: NavHostController, id: String) {
             }
             if (addRole) {
                 var role by remember { mutableStateOf<AppRole?>(null) }
-                var unit by remember { mutableStateOf<WilayahUnit?>(null) }
+                var unit by remember { mutableStateOf<String?>(null) }
                 BottomSheet("Tambah peran", { addRole = false }) {
                     RoleFields(d.units, role, unit, { role = it; unit = null }, { unit = it })
                     PrimaryButton("Tambah", onClick = {
                         val r = role ?: return@PrimaryButton toast("Pilih peran")
                         val u = unit ?: return@PrimaryButton toast("Pilih unit")
-                        model.addRole(r, u.id, { toast(it) }) { addRole = false; toast("Peran ditambahkan.") }
+                        model.addRole(r, u, { toast(it) }) { addRole = false; toast("Peran ditambahkan.") }
                     }, modifier = Modifier.fillMaxWidth())
                 }
             }
@@ -494,7 +523,7 @@ fun AkunBaruScreen(nav: NavHostController) {
             var email by remember { mutableStateOf("") }
             var phone by remember { mutableStateOf("") }
             var role by remember { mutableStateOf<AppRole?>(null) }
-            var unit by remember { mutableStateOf<WilayahUnit?>(null) }
+            var unit by remember { mutableStateOf<String?>(null) }
             var error by remember { mutableStateOf<String?>(null) }
             Column(Modifier.imePadding()) {
                 FormColumn(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
@@ -508,7 +537,7 @@ fun AkunBaruScreen(nav: NavHostController) {
                 StickyBottom {
                     PrimaryButton("Buat akun", onClick = {
                         error = null
-                        model.create(name, email, phone, role, unit?.id, { error = it }) { _, pw -> created = email.trim().lowercase() to pw }
+                        model.create(name, email, phone, role, unit, { error = it }) { _, pw -> created = email.trim().lowercase() to pw }
                     }, loading = busy, modifier = Modifier.fillMaxWidth())
                 }
             }

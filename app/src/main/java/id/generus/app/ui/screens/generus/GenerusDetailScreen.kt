@@ -1,5 +1,7 @@
 package id.generus.app.ui.screens.generus
 
+import id.generus.app.ui.components.UnitPickerField
+import id.generus.app.data.model.TreeUnit
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -96,6 +98,7 @@ data class GenerusDetailData(
     val attendance: GenerusAttendance,
     val capaian: CapaianSummary?,
     val mutateTargets: List<ScopeUnit>,
+    val mutateTree: List<TreeUnit> = emptyList(),
 )
 
 class GenerusDetailVm(c: AppContainer, private val id: String, private val mutator: Boolean) : LoadVm<GenerusDetailData>(c) {
@@ -106,7 +109,8 @@ class GenerusDetailVm(c: AppContainer, private val id: String, private val mutat
         val attendance = c.agenda.generusAttendance(id)
         val capaian = if (kurikulumEnabled) runCatching { capaianSummary(g) }.getOrNull() else null
         val mutate = if (mutator && g.status == GenerusStatus.aktif) runCatching { c.generus.scopeUnits("mutate") }.getOrDefault(emptyList()) else emptyList()
-        return GenerusDetailData(g, attendance, capaian, mutate)
+        val mutateTree = if (mutate.isEmpty()) emptyList() else c.units.tree(mutate.filter { it.id != g.kelompokId }.map { it.id })
+        return GenerusDetailData(g, attendance, capaian, mutate, mutateTree)
     }
 
     private suspend fun capaianSummary(g: GenerusDetail): CapaianSummary? {
@@ -222,7 +226,7 @@ fun GenerusDetailScreen(nav: NavHostController, id: String) {
             onConfirm = { model.reissue({ toast(it) }) { sheet = null; toast("Kartu baru diterbitkan. Kartu lama tidak berlaku lagi.") } },
             onDismiss = { sheet = null },
         )
-        "mutate" -> MutateSheet(d!!.mutateTargets.filter { it.id != g.kelompokId }, onDismiss = { sheet = null }) { k ->
+        "mutate" -> MutateSheet(d!!.mutateTree, onDismiss = { sheet = null }) { k ->
             model.mutate(k, { toast(it) }) { sheet = null; toast("Generus dipindahkan.") }
         }
         "delete" -> ConfirmSheet(
@@ -331,10 +335,10 @@ private fun StatusSheet(onDismiss: () -> Unit, onSave: (GenerusStatus, LocalDate
 }
 
 @Composable
-private fun MutateSheet(options: List<ScopeUnit>, onDismiss: () -> Unit, onSave: (String) -> Unit) {
-    var target by remember { mutableStateOf<ScopeUnit?>(null) }
+private fun MutateSheet(tree: List<TreeUnit>, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var target by remember { mutableStateOf<String?>(null) }
     BottomSheet("Pindah kelompok", onDismiss) {
-        SelectField("Kelompok tujuan", options, target, { "Kelompok ${it.name}" }, { target = it }, group = { "Desa ${it.desaName}" })
-        PrimaryButton("Pindahkan", onClick = { target?.let { onSave(it.id) } }, enabled = target != null, modifier = Modifier.fillMaxWidth())
+        UnitPickerField("Kelompok tujuan", tree, target, { target = it }, placeholder = "Pilih kelompok tujuan")
+        PrimaryButton("Pindahkan", onClick = { target?.let(onSave) }, enabled = target != null, modifier = Modifier.fillMaxWidth())
     }
 }

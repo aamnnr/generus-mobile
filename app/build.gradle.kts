@@ -17,6 +17,14 @@ val secrets = Properties().apply {
 fun secret(key: String): String = (secrets.getProperty(key) ?: System.getenv(key) ?: "").trim()
 fun quoted(v: String) = "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
+// Merek tampilan, sama dengan NEXT_PUBLIC_BRAND di PWA (generus/src/lib/brand.ts):
+//   kliik   (bawaan) — KLIIK JM: navy #1A2189 + cyan #008CD7, logo dari klien.
+//   generus           — desain lama (hijau tua + kuningan, logo masjid & bintang).
+// Kembali ke desain lama: ./gradlew assembleResmiRelease -Pbrand=generus (atau generus.brand di gradle.properties).
+val brand = ((findProperty("brand") ?: findProperty("generus.brand"))?.toString() ?: "kliik").trim().lowercase()
+require(brand == "kliik" || brand == "generus") { "brand harus kliik atau generus, bukan '$brand'" }
+val appName = if (brand == "kliik") "KLIIK JM" else "Generus"
+
 android {
     namespace = "id.generus.app"
     compileSdk = 36
@@ -25,8 +33,9 @@ android {
         applicationId = "id.generus.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+        buildConfigField("String", "BRAND", quoted(brand))
         buildConfigField("String", "APP_TIMEZONE", quoted(secret("APP_TIMEZONE").ifEmpty { "Asia/Jakarta" }))
     }
 
@@ -38,19 +47,22 @@ android {
             dimension = "server"
             applicationIdSuffix = ".uji"
             versionNameSuffix = "-uji"
-            resValue("string", "app_name", "Generus Uji")
+            resValue("string", "app_name", "$appName Uji")
             buildConfigField("String", "SUPABASE_URL", quoted(secret("UJI_SUPABASE_URL")))
             buildConfigField("String", "SUPABASE_ANON_KEY", quoted(secret("UJI_SUPABASE_ANON_KEY")))
             buildConfigField("boolean", "FEATURE_KURIKULUM", "true")
         }
         create("resmi") {
             dimension = "server"
-            resValue("string", "app_name", "Generus")
+            resValue("string", "app_name", appName)
             buildConfigField("String", "SUPABASE_URL", quoted(secret("RESMI_SUPABASE_URL")))
             buildConfigField("String", "SUPABASE_ANON_KEY", quoted(secret("RESMI_SUPABASE_ANON_KEY")))
             buildConfigField("boolean", "FEATURE_KURIKULUM", secret("RESMI_FEATURE_KURIKULUM").ifEmpty { "false" })
         }
     }
+
+    // Ikon peluncur & warna jendela per merek (src/brand/<merek>/res).
+    sourceSets["main"].res.srcDir("src/brand/$brand/res")
 
     buildTypes {
         release {

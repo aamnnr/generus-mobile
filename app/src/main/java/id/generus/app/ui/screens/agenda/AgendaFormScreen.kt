@@ -1,5 +1,7 @@
 package id.generus.app.ui.screens.agenda
 
+import id.generus.app.ui.components.UnitPickerField
+import id.generus.app.data.model.TreeUnit
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -62,18 +64,22 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.util.UUID
 
-data class AgendaFormData(val units: List<AgendaUnit>, val jenjang: List<Jenjang>, val existing: AgendaDetail?)
+data class AgendaFormData(val units: List<AgendaUnit>, val tree: List<TreeUnit>, val jenjang: List<Jenjang>, val existing: AgendaDetail?)
 
 private const val MAX_REPEAT_WEEKS = 26
 
 class AgendaFormVm(c: AppContainer, private val id: String?) : LoadVm<AgendaFormData>(c) {
     init { load() }
 
-    override suspend fun fetch() = AgendaFormData(
-        units = c.agenda.units(),
-        jenjang = c.agenda.jenjang(),
-        existing = id?.let { c.agenda.detail(it) ?: throw UserError("Agenda tidak ditemukan atau Anda tidak punya akses.") },
-    )
+    override suspend fun fetch(): AgendaFormData {
+        val units = c.agenda.units()
+        return AgendaFormData(
+            units = units,
+            tree = c.units.tree(units.map { it.id }),
+            jenjang = c.agenda.jenjang(kegiatan = true),
+            existing = id?.let { c.agenda.detailSummary(it) ?: throw UserError("Agenda tidak ditemukan atau Anda tidak punya akses.") },
+        )
+    }
 
     fun save(rows: List<AgendaWrite>, onError: (String) -> Unit, onOk: (String) -> Unit) = run(onError) {
         if (id == null) {
@@ -178,14 +184,7 @@ private fun AgendaForm(data: AgendaFormData, model: AgendaFormVm, onSaved: (Stri
     Column(Modifier.imePadding()) {
         FormColumn(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
             if (error != null) InfoBanner(error!!, tone = BannerTone.Error)
-            SelectField(
-                "Penyelenggara",
-                data.units,
-                unit,
-                { "${it.level.label} ${it.name}" + (it.parentName?.let { p -> " · $p" } ?: "") },
-                { unit = it },
-                group = { it.level.label },
-            )
+            UnitPickerField("Penyelenggara", data.tree, unit?.id, { id -> unit = data.units.firstOrNull { it.id == id } }, placeholder = "Pilih penyelenggara")
             TextInput("Judul", title, { title = it }, placeholder = "mis. Pengajian rutin remaja")
             TextInput("Lokasi (opsional)", location, { location = it }, placeholder = "mis. Masjid Al-Ikhlas")
             DateField("Tanggal", date, { date = it })

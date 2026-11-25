@@ -1,5 +1,34 @@
 package id.generus.app.ui.screens.agenda
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material3.FilterChip
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import id.generus.app.core.userMessage
+import id.generus.app.data.model.KelompokAttendance
+import id.generus.app.ui.components.Loadable
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.serialization.builtins.ListSerializer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -109,15 +138,93 @@ import kotlinx.serialization.builtins.nullable
 @Serializable
 data class AgendaDetailData(val agenda: AgendaDetail, val jenjang: List<Jenjang>)
 
+/** Isi kartu presensi: ringkasan per kelompok, daftar satu kelompok, atau hasil pencarian lintas kelompok. */
+sealed interface PresensiView {
+    data object Summary : PresensiView
+    data class Kelompok(val kelompokId: String) : PresensiView
+    data class Search(val q: String) : PresensiView
+}
+
+private const val SEARCH_LIMIT = 50
+
 class AgendaDetailVm(c: AppContainer, private val id: String) : LoadVm<AgendaDetailData?>(c, CacheSpec("agenda-$id", AgendaDetailData.serializer().nullable)) {
+    val view = MutableStateFlow<PresensiView>(PresensiView.Summary)
+    val query = MutableStateFlow("")
+    private val _roster = MutableStateFlow(Loadable<List<RosterRow>>(loading = false))
+    val roster: StateFlow<Loadable<List<RosterRow>>> = _roster.asStateFlow()
+    private var rosterFor: PresensiView = PresensiView.Summary
+    private var rosterJob: Job? = null
+    private var searchJob: Job? = null
+
     init {
         load()
-        viewModelScope.launch { c.presensi.synced.collect { load() } }
+        viewModelScope.launch { c.presensi.synced.collect { refreshAll() } }
     }
 
+    // Tampilan awal = ringkasan per kelompok (dihitung di database); daftar nama baru
+    // dimuat untuk satu kelompok atau hasil pencarian, agar ringan meski pesertanya ribuan.
     override suspend fun fetch(): AgendaDetailData? {
-        val agenda = c.agenda.detail(id) ?: return null
+        val agenda = c.agenda.detailSummary(id) ?: return null
         return AgendaDetailData(agenda, runCatching { c.agenda.jenjang() }.getOrDefault(emptyList()))
+    }
+
+    fun refreshAll() {
+        refreshQuietly()
+        loadRoster(rosterFor, quiet = true)
+    }
+
+    fun open(v: PresensiView) {
+        searchJob?.cancel()
+        if (v !is PresensiView.Search) query.value = ""
+        view.value = v
+    }
+
+    /** Cari nama di semua kelompok (minimal 2 huruf), dengan jeda ketik. */
+    fun search(text: String) {
+        query.value = text
+        searchJob?.cancel()
+        val q = text.trim().take(60)
+        searchJob = viewModelScope.launch {
+            delay(400)
+            view.value = if (q.length >= 2) PresensiView.Search(q) else PresensiView.Summary
+        }
+    }
+
+    fun loadRoster(v: PresensiView, quiet: Boolean = false) {
+        rosterFor = v
+        rosterJob?.cancel()
+        if (v == PresensiView.Summary) {
+            _roster.value = Loadable(loading = false)
+            return
+        }
+        val key = "agenda-$id-" + when (v) {
+            is PresensiView.Kelompok -> "k-${v.kelompokId}"
+            is PresensiView.Search -> "q-${v.q.lowercase()}"
+            PresensiView.Summary -> ""
+        }
+        val serializer = ListSerializer(RosterRow.serializer())
+        if (!quiet) _roster.update { if (it.data != null && rosterFor == v) it.copy(loading = true) else Loadable(loading = true) }
+        rosterJob = viewModelScope.launch {
+            try {
+                val rows = when (v) {
+                    is PresensiView.Kelompok -> c.agenda.peserta(id, kelompokId = v.kelompokId)
+                    is PresensiView.Search -> c.agenda.peserta(id, q = v.q, limit = SEARCH_LIMIT)
+                    PresensiView.Summary -> emptyList()
+                }
+                c.cache.put(key, serializer, rows)
+                _roster.value = Loadable(rows, loading = false)
+            } catch (e: Throwable) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                val cached = if (_roster.value.data == null) c.cache.get(key, serializer) else null
+                _roster.update {
+                    when {
+                        cached != null -> Loadable(cached, loading = false)
+                        it.data != null -> it.copy(loading = false)
+                        else -> Loadable(loading = false, error = e.userMessage("Gagal memuat daftar peserta."))
+                    }
+                }
+            }
+        }
     }
 
     fun record(entries: List<AttendanceEntry>) {
@@ -129,7 +236,7 @@ class AgendaDetailVm(c: AppContainer, private val id: String) : LoadVm<AgendaDet
         onOk(c.agenda.cancel(id, series))
     }
 
-    fun lock(onError: (String) -> Unit, onOk: () -> Unit) = run(onError, { load(); onOk() }) { c.agenda.lock(id) }
+    fun lock(onError: (String) -> Unit, onOk: () -> Unit) = run(onError, { refreshAll(); onOk() }) { c.agenda.lock(id) }
 
     fun addScanner(userId: String, grantedBy: String, onError: (String) -> Unit, onOk: () -> Unit) = run(onError, { load(); onOk() }) {
         val a = state.value.data?.agenda ?: return@run
@@ -141,7 +248,7 @@ class AgendaDetailVm(c: AppContainer, private val id: String) : LoadVm<AgendaDet
     suspend fun candidates(selfId: String): List<ProfileOption> = c.agenda.scannerCandidates(selfId)
 }
 
-/** Detail agenda + checklist presensi offline-first (padanan /agenda/[id]). */
+/** Detail agenda: rekap per kelompok + checklist presensi offline-first (padanan /agenda/[id]). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AgendaDetailScreen(nav: NavHostController, id: String) {
@@ -154,15 +261,53 @@ fun AgendaDetailScreen(nav: NavHostController, id: String) {
     val online by c.network.online.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val queued by c.presensi.observeOutbox(id).collectAsStateWithLifecycle(emptyList())
+    val chosen by model.view.collectAsStateWithLifecycle()
+    val search by model.query.collectAsStateWithLifecycle()
+    val roster by model.roster.collectAsStateWithLifecycle()
 
     val scope = rememberCoroutineScope()
-    var query by rememberSaveable { mutableStateOf("") }
+    var localQuery by rememberSaveable { mutableStateOf("") }
+    var onlyEmpty by rememberSaveable { mutableStateOf(false) }
     var sheet by remember { mutableStateOf<String?>(null) }
     var confirmBulk by remember { mutableStateOf(false) }
+    var liveAt by remember { mutableStateOf<Instant?>(null) }
 
     val data = state.data
     val a = data?.agenda
-    OnResult(nav) { model.load() }
+    OnResult(nav) { model.refreshAll() }
+
+    // Satu kelompok saja → langsung tampilkan daftarnya.
+    val single = a != null && a.summary.size <= 1
+    val view: PresensiView = when {
+        a == null -> PresensiView.Summary
+        single -> a.summary.firstOrNull()?.let { PresensiView.Kelompok(it.kelompokId) } ?: PresensiView.Summary
+        else -> chosen
+    }
+    LaunchedEffect(view) {
+        model.loadRoster(view)
+        localQuery = ""
+    }
+
+    // Perbarui otomatis sejak 1 jam sebelum mulai sampai batas pelengkapan, agar hasil
+    // pemindai petugas lain langsung terlihat. Berhenti saat aplikasi tidak tampil.
+    val now = Instant.now()
+    val live = a != null && a.lockedAt == null && a.cancelledAt == null &&
+        !now.isBefore(a.startsAt.minusSeconds(3600)) && !now.isAfter(a.delegateUntil)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(live) {
+        if (!live) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                delay(15_000)
+                if (c.network.online.value) {
+                    model.refreshAll()
+                    liveAt = Instant.now()
+                }
+            }
+        }
+    }
+
+    BackHandler(enabled = !single && view != PresensiView.Summary) { model.open(PresensiView.Summary) }
 
     AppScreen(
         a?.title ?: "Agenda",
@@ -173,7 +318,7 @@ fun AgendaDetailScreen(nav: NavHostController, id: String) {
                 IconButton(onClick = { nav.navigate(AgendaForm(a.id)) }) { Icon(Icons.Rounded.Edit, contentDescription = "Ubah agenda") }
             }
         },
-        bottomBar = { if (a != null && a.roster.any { it.canWrite }) SyncBar(queued, online) },
+        bottomBar = { if (roster.data?.any { it.canWrite } == true && a?.cancelledAt == null) SyncBar(queued, online) },
     ) { p ->
         when {
             state.data == null && state.error != null -> ErrorBox(state.error!!, model::load, Modifier.padding(p))
@@ -182,25 +327,39 @@ fun AgendaDetailScreen(nav: NavHostController, id: String) {
             else -> {
                 val queuedMap = queued.associateBy { it.generusId }
                 fun current(r: RosterRow): AttendanceStatus? = queuedMap[r.generusId]?.status?.let { AttendanceStatus.valueOf(it) } ?: r.status
-                val writable = a.roster.filter { it.canWrite }
-                val q = query.trim().lowercase()
-                val visible = if (q.isEmpty()) a.roster else a.roster.filter { it.name.lowercase().contains(q) }
-                val showGroup = a.roster.map { it.kelompok to it.desa }.distinct().size > 1
+                val cancelled = a.cancelledAt != null
+                // Pengelola tetap bisa mengoreksi setelah dikunci; server yang menentukan can_write.
+                val rows = roster.data.orEmpty().map { if (cancelled) it.copy(canWrite = false) else it }
+                val writable = rows.filter { it.canWrite }
+                val q = localQuery.trim().lowercase()
+                val visible = rows.filter { (q.isEmpty() || it.name.lowercase().contains(q)) && (!onlyEmpty || current(it) == null) }
+                val showGroup = view is PresensiView.Search
                 val groups = visible.groupBy { if (showGroup) "${it.kelompok} · Desa ${it.desa}" else "" }
                 val rejected = queued.filter { it.error != null }
-                val now = Instant.now()
-                val canScan = (a.canManage || a.isScanner) && a.lockedAt == null && a.cancelledAt == null
+                val sum = KelompokAttendance.sum(a.summary)
+                val scanOpen = a.lockedAt == null && !cancelled && (a.canManage || a.isScanner)
+                val selected = (view as? PresensiView.Kelompok)?.let { v -> a.summary.firstOrNull { it.kelompokId == v.kelompokId } }
+                val started = !now.isBefore(a.startsAt)
 
-                PullToRefreshBox(isRefreshing = state.loading, onRefresh = model::load, modifier = Modifier.fillMaxSize().padding(p)) {
+                PullToRefreshBox(isRefreshing = state.loading || roster.loading, onRefresh = model::refreshAll, modifier = Modifier.fillMaxSize().padding(p)) {
                     LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (stale) item { OfflineStrip("Offline: daftar dari salinan terakhir. Ketukan tetap tersimpan dan dikirim saat online.") }
+                        if (stale) item { OfflineStrip("Offline: data dari salinan terakhir. Ketukan tetap tersimpan dan dikirim saat online.") }
                         item { HeaderCard(a, data.jenjang) }
-                        item { Summary(a.roster.map { current(it) }) }
-                        if (canScan) item {
-                            PrimaryButton("Scan QR", onClick = { nav.navigate(Scanner(a.id)) }, icon = Icons.Rounded.QrCodeScanner, modifier = Modifier.fillMaxWidth())
+                        if (scanOpen) item {
+                            PrimaryButton("Buka pemindai QR", onClick = { nav.navigate(Scanner(a.id)) }, icon = Icons.Rounded.QrCodeScanner, modifier = Modifier.fillMaxWidth())
                         }
-                        if (!a.canManage && writable.isNotEmpty() && a.lockedAt == null) item {
-                            InfoBanner("Anda bisa melengkapi presensi anggota kelompok Anda sampai ${a.delegateUntil.formatDateTime()} ${zoneLabel()}.")
+                        item { StatGrid(sum) }
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    "Kehadiran ${Math.round(sum.rate * 100)}%" +
+                                        (if (sum.belum > 0) " · ${sum.belum.formatId()} belum diisi" else "") +
+                                        (if (a.lockedAt == null && !cancelled) " · admin di bawahnya bisa melengkapi anggotanya sampai ${a.delegateUntil.formatDateTime()}" else ""),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (live) LiveIndicator(liveAt)
+                            }
                         }
                         if (a.lockedAt != null) item {
                             InfoBanner("Presensi dikunci ${a.lockedAt.formatDateTime()}. Peserta yang belum tercatat menjadi alpa.", icon = Icons.Rounded.Lock)
@@ -208,51 +367,149 @@ fun AgendaDetailScreen(nav: NavHostController, id: String) {
                         if (rejected.isNotEmpty()) item {
                             InfoBanner("${rejected.size} perubahan ditolak server: ${rejected.first().error}", tone = BannerTone.Error) {
                                 Text("Coba lagi", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { scope.launch { c.presensi.retryRejected(id) } })
-                                Text("Buang", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error, modifier = Modifier.clickable { scope.launch { c.presensi.discardRejected(id) } })
+                                Text("Buang perubahan ini", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error, modifier = Modifier.clickable { scope.launch { c.presensi.discardRejected(id) } })
                             }
                         }
+
+                        // Judul kartu presensi
                         item {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                SearchPill(query, { query = it }, "Cari nama peserta")
-                                if (writable.any { current(it) == null } && a.lockedAt == null) {
-                                    SecondaryButton("Hadirkan semua yang belum diisi", onClick = { confirmBulk = true }, modifier = Modifier.fillMaxWidth())
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                if (view != PresensiView.Summary && !single) {
+                                    Row(
+                                        Modifier.clip(RoundedCornerShape(8.dp)).clickable { model.open(PresensiView.Summary) }.padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("Semua kelompok", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
+                                Text(
+                                    when {
+                                        view is PresensiView.Kelompok && !single && selected != null -> "${selected.kelompok} · Desa ${selected.desa}"
+                                        view is PresensiView.Search -> "Hasil pencarian “${view.q}”"
+                                        else -> "Presensi"
+                                    },
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Text(
+                                    when {
+                                        cancelled -> "Agenda dibatalkan."
+                                        view == PresensiView.Summary -> "Hasil pemindai QR masuk otomatis. Pilih kelompok atau cari nama untuk melihat daftar dan mengisi presensi manual."
+                                        !started -> "Agenda belum dimulai. Izin/sakit sudah bisa dicatat."
+                                        writable.isNotEmpty() -> "Ketuk status untuk setiap peserta; tersimpan otomatis."
+                                        else -> "Anda hanya bisa melihat presensi ini."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         }
-                        if (visible.isEmpty()) item {
-                            Text(
-                                if (a.roster.isEmpty()) "Belum ada peserta sasaran yang terlihat oleh akun Anda." else "Tidak ada peserta yang cocok.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        // Pencarian lintas kelompok di ringkasan; di daftar satu kelompok cukup pencarian lokal.
+                        if (!single && view !is PresensiView.Kelompok) item {
+                            SearchPill(search, model::search, "Cari nama di semua kelompok")
                         }
-                        groups.forEach { (group, rows) ->
-                            if (group.isNotEmpty()) item(key = "g:$group") { Overline(group, Modifier.padding(start = 4.dp, top = 4.dp)) }
-                            item(key = "list:$group") {
-                                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
-                                    Column {
-                                        rows.forEachIndexed { i, r ->
-                                            if (i > 0) RowDivider()
-                                            ChecklistRow(r, current(r), queuedMap[r.generusId], enabled = r.canWrite && a.lockedAt == null && a.cancelledAt == null) { s ->
-                                                model.record(listOf(AttendanceEntry(a.id, r.generusId, s)))
+
+                        if (view == PresensiView.Summary) {
+                            if (a.summary.isEmpty()) item {
+                                Text("Tidak ada peserta sasaran yang terlihat oleh Anda.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            val byDesa = a.summary.groupBy { it.desaId }
+                            val multiDesa = byDesa.size > 1
+                            byDesa.forEach { (desaId, items) ->
+                                item(key = "desa:$desaId") {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        if (multiDesa) {
+                                            val t = KelompokAttendance.sum(items)
+                                            Row(Modifier.padding(horizontal = 4.dp)) {
+                                                Overline("Desa ${items.first().desa}", Modifier.weight(1f))
+                                                Text("${t.present.formatId()}/${t.total.formatId()} · ${Math.round(t.rate * 100)}%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
+                                            Column {
+                                                items.forEachIndexed { i, k ->
+                                                    if (i > 0) RowDivider()
+                                                    KelompokRow(k) { model.open(PresensiView.Kelompok(k.kelompokId)) }
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
+                        } else {
+                            if (selected != null && !single) item {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    CompositionBar(selected)
+                                    Text(
+                                        AttendanceStatus.entries.joinToString(" · ") { "${it.label} ${selected.count(it)}" } + " · Belum ${selected.belum}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            if (rows.isNotEmpty()) item {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    SearchPill(localQuery, { localQuery = it }, "Cari nama")
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        FilterChip(
+                                            selected = onlyEmpty,
+                                            onClick = { onlyEmpty = !onlyEmpty },
+                                            label = { Text("Hanya yang belum diisi") },
+                                            leadingIcon = if (onlyEmpty) { { Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(18.dp)) } } else null,
+                                            shape = CircleShape,
+                                        )
+                                    }
+                                    if (writable.any { current(it) == null }) {
+                                        SecondaryButton("Hadirkan semua yang belum diisi", onClick = { confirmBulk = true }, modifier = Modifier.fillMaxWidth())
+                                    }
+                                }
+                            }
+                            when {
+                                roster.data == null && roster.error != null -> item { ErrorBox(roster.error!!, { model.loadRoster(view) }) }
+                                roster.data == null -> item { LoadingBox() }
+                                rows.isEmpty() -> item {
+                                    Text(
+                                        if (showGroup) "Tidak ada peserta dengan nama itu." else "Tidak ada peserta sasaran yang terlihat oleh Anda.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                visible.isEmpty() -> item {
+                                    Text("Tidak ada peserta yang cocok.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            groups.forEach { (group, items) ->
+                                if (group.isNotEmpty()) item(key = "g:$group") { Overline(group, Modifier.padding(start = 4.dp, top = 4.dp)) }
+                                item(key = "list:$group") {
+                                    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
+                                        Column {
+                                            items.forEachIndexed { i, r ->
+                                                if (i > 0) RowDivider()
+                                                ChecklistRow(r, current(r), queuedMap[r.generusId], enabled = r.canWrite) { s ->
+                                                    model.record(listOf(AttendanceEntry(a.id, r.generusId, s)))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if (view is PresensiView.Search && rows.size >= SEARCH_LIMIT) item {
+                                Text("Menampilkan $SEARCH_LIMIT hasil pertama. Perjelas nama yang dicari, atau buka per kelompok.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (rows.isNotEmpty()) item {
+                                Text(
+                                    "H = Hadir · T = Terlambat · I = Izin · S = Sakit · A = Alpa. Ketukan langsung tersimpan, juga saat sinyal putus.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
-                        item {
-                            Text(
-                                "H = Hadir · T = Terlambat · I = Izin · S = Sakit · A = Alpa. Ketukan langsung tersimpan, juga saat sinyal putus.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (a.canManage) item {
+                        if (a.canManage && !cancelled) item {
                             ManageCard(
                                 a = a,
                                 now = now,
                                 busy = busy,
+                                scanOpen = scanOpen,
                                 onCancel = { sheet = "cancel" },
                                 onLock = { sheet = "lock" },
                                 onAddScanner = { sheet = "scanner" },
@@ -282,7 +539,7 @@ fun AgendaDetailScreen(nav: NavHostController, id: String) {
                     }
                     "lock" -> ConfirmSheet(
                         "Kunci presensi?",
-                        "Peserta yang belum tercatat menjadi alpa. Setelah dikunci, presensi tidak bisa diubah lagi lewat aplikasi.",
+                        "Peserta yang belum tercatat menjadi alpa. Setelah dikunci, pengelola agenda masih bisa mengoreksi; setiap perubahan tercatat.",
                         "Kunci presensi",
                         onConfirm = { sheet = null; model.lock({ toast(it) }) { toast("Presensi dikunci. Peserta yang belum tercatat menjadi alpa.") } },
                         onDismiss = { sheet = null },
@@ -294,6 +551,86 @@ fun AgendaDetailScreen(nav: NavHostController, id: String) {
                 }
             }
         }
+    }
+}
+
+/** Titik hijau berdenyut + waktu pembaruan terakhir (padanan LiveRefresh di PWA). */
+@Composable
+private fun LiveIndicator(at: Instant?) {
+    val pulse = rememberInfiniteTransition(label = "live")
+    val scale by pulse.animateFloat(1f, 2.2f, infiniteRepeatable(tween(1000), RepeatMode.Restart), label = "ping")
+    val alpha by pulse.animateFloat(0.6f, 0f, infiniteRepeatable(tween(1000), RepeatMode.Restart), label = "fade")
+    val green = GenerusTheme.extra.hadir.solid
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.size(8.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(8.dp).graphicsLayer { scaleX = scale; scaleY = scale; this.alpha = alpha }.clip(CircleShape).background(green))
+            Box(Modifier.size(8.dp).clip(CircleShape).background(green))
+        }
+        Text(
+            "Langsung · diperbarui tiap 15 detik" + (at?.let { " (terakhir ${java.time.format.DateTimeFormatter.ofPattern("HH.mm.ss").withZone(java.time.ZoneId.systemDefault()).format(it)})" } ?: ""),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Kotak angka: Peserta + lima status (3 kolom). */
+@Composable
+private fun StatGrid(sum: KelompokAttendance) {
+    val x = GenerusTheme.extra
+    val cells = listOf(Triple("Peserta", sum.total, null as AttendanceStatus?)) + AttendanceStatus.entries.map { Triple(it.label, sum.count(it), it) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        cells.chunked(3).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { (label, value, s) ->
+                    val tone = s?.let { x.of(it) }
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = tone?.soft ?: MaterialTheme.colorScheme.surface,
+                        shadowElevation = if (tone == null) 1.dp else 0.dp,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = tone?.solid ?: MaterialTheme.colorScheme.onSurface)
+                            Text(value.formatId(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = tone?.solid ?: MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Batang komposisi status; sisa (abu-abu) = belum diisi. */
+@Composable
+private fun CompositionBar(s: KelompokAttendance) {
+    val x = GenerusTheme.extra
+    val desc = AttendanceStatus.entries.joinToString(", ") { "${it.label} ${s.count(it)}" } + ", belum ${s.belum}"
+    Row(Modifier.fillMaxWidth().height(8.dp).clip(CircleShape).background(x.track).semantics { contentDescription = desc }) {
+        if (s.total > 0) AttendanceStatus.entries.forEach { st ->
+            val n = s.count(st)
+            if (n > 0) Box(Modifier.fillMaxHeight().weight(n.toFloat()).background(x.of(st).solid))
+        }
+        if (s.total > 0 && s.belum > 0) Spacer(Modifier.weight(s.belum.toFloat()))
+    }
+}
+
+@Composable
+private fun KelompokRow(k: KelompokAttendance, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(k.kelompok, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Text("${k.present.formatId()}/${k.total.formatId()} · ${Math.round(k.rate * 100)}%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            CompositionBar(k)
+            if (k.belum > 0) Text("${k.belum} belum diisi", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -319,28 +656,6 @@ private fun HeaderCard(a: AgendaDetail, jenjang: List<Jenjang>) {
         )
         if (jenjang.isNotEmpty()) {
             Text("Sasaran: ${targetLabel(a.targetJenjangIds, a.targetKategoriIds, a.targetGender, jenjang)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-/** Kotak statistik berwarna per status + persentase hadir. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun Summary(statuses: List<AttendanceStatus?>) {
-    val total = statuses.size
-    val counts = AttendanceStatus.entries.associateWith { s -> statuses.count { it == s } }
-    val belum = statuses.count { it == null }
-    val present = (counts[AttendanceStatus.hadir] ?: 0) + (counts[AttendanceStatus.terlambat] ?: 0)
-    AppCard(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(present.formatId(), style = MaterialTheme.typography.headlineMedium)
-            Text(" / ${total.formatId()} hadir", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp).weight(1f))
-            Text(if (total > 0) "${Math.round(present * 100.0 / total)}%" else "—", style = MaterialTheme.typography.titleMedium)
-        }
-        ProgressBar(if (total > 0) present.toFloat() / total else 0f, color = GenerusTheme.extra.hadir.solid)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            AttendanceStatus.entries.forEach { s -> StatusBadge("${s.letter} ${counts[s] ?: 0}", GenerusTheme.extra.of(s)) }
-            StatusBadge("Belum $belum", id.generus.app.ui.theme.StatusColor(MaterialTheme.colorScheme.onSurfaceVariant, GenerusTheme.extra.tile))
         }
     }
 }
@@ -419,14 +734,45 @@ private fun ManageCard(
     a: AgendaDetail,
     now: Instant,
     busy: Boolean,
+    scanOpen: Boolean,
     onCancel: () -> Unit,
     onLock: () -> Unit,
     onAddScanner: () -> Unit,
     onRemoveScanner: (String) -> Unit,
 ) {
+    if (scanOpen) {
+        AppCard(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Petugas scan", style = MaterialTheme.typography.titleMedium)
+                    Text("Akses pemindai sementara untuk agenda ini, sampai ${a.delegateUntil.formatDateTime()}.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = onAddScanner) { Icon(Icons.Rounded.PersonAdd, contentDescription = "Tambah petugas scan", tint = MaterialTheme.colorScheme.primary) }
+            }
+            if (a.scanners.isEmpty()) {
+                Text("Belum ada petugas. Pengelola agenda selalu bisa memindai.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            a.scanners.forEach { s ->
+                val expired = s.expiresAt.isBefore(now)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            s.name,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = if (expired) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                            textDecoration = if (expired) TextDecoration.LineThrough else null,
+                        )
+                        Text("${s.email ?: ""} · s.d. ${s.expiresAt.formatDateTime()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = { onRemoveScanner(s.userId) }) { Icon(Icons.Rounded.PersonRemove, contentDescription = "Cabut akses ${s.name}", tint = MaterialTheme.colorScheme.error) }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+    }
     AppCard(Modifier.fillMaxWidth()) {
         Text("Kelola agenda", style = MaterialTheme.typography.titleMedium)
-        if (a.cancelledAt == null && a.lockedAt == null) {
+        if (a.lockedAt == null) {
             if (!now.isBefore(a.endsAt)) {
                 PrimaryButton("Kunci presensi", onClick = onLock, icon = Icons.Rounded.Lock, loading = busy, modifier = Modifier.fillMaxWidth())
             } else {
@@ -437,28 +783,12 @@ private fun ManageCard(
                 )
             }
             SecondaryButton("Batalkan agenda", onClick = onCancel, icon = Icons.Rounded.EventBusy, modifier = Modifier.fillMaxWidth())
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Petugas scan", style = MaterialTheme.typography.titleSmall)
-                Text("Akses sementara untuk memindai QR agenda ini saja.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (a.cancelledAt == null && a.lockedAt == null) {
-                IconButton(onClick = onAddScanner) { Icon(Icons.Rounded.PersonAdd, contentDescription = "Tambah petugas scan", tint = MaterialTheme.colorScheme.primary) }
-            }
-        }
-        if (a.scanners.isEmpty()) {
-            Text("Belum ada petugas.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        a.scanners.forEach { s ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(s.name, style = MaterialTheme.typography.titleSmall)
-                    Text("${s.email ?: ""} · s.d. ${s.expiresAt.formatDateTime()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                IconButton(onClick = { onRemoveScanner(s.userId) }) { Icon(Icons.Rounded.PersonRemove, contentDescription = "Cabut akses ${s.name}", tint = MaterialTheme.colorScheme.error) }
-            }
+        } else {
+            Text(
+                "Dikunci ${a.lockedAt.formatDateTime()}. Anda masih bisa mengoreksi presensi; setiap perubahan tercatat.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

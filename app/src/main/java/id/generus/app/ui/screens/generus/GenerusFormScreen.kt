@@ -1,5 +1,7 @@
 package id.generus.app.ui.screens.generus
 
+import id.generus.app.ui.components.UnitPickerField
+import id.generus.app.data.model.TreeUnit
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -47,14 +49,16 @@ import id.generus.app.ui.popWithResult
 import id.generus.app.ui.vm
 import java.time.LocalDate
 
-data class GenerusFormData(val jenjang: List<Jenjang>, val kelompok: List<ScopeUnit>, val existing: GenerusDetail?)
+data class GenerusFormData(val jenjang: List<Jenjang>, val kelompok: List<ScopeUnit>, val tree: List<TreeUnit>, val existing: GenerusDetail?)
 
 class GenerusFormVm(c: AppContainer, private val id: String?) : LoadVm<GenerusFormData>(c) {
+    private var kelompokCache: List<ScopeUnit> = emptyList()
     init { load() }
 
     override suspend fun fetch() = GenerusFormData(
         jenjang = c.agenda.jenjang(),
-        kelompok = if (id == null) c.generus.scopeUnits("write") else emptyList(),
+        kelompok = (if (id == null) c.generus.scopeUnits("write") else emptyList()).also { kelompokCache = it },
+        tree = if (id == null) c.units.tree(kelompokCache.map { it.id }) else emptyList(),
         existing = id?.let { c.generus.detail(it) ?: throw UserError("Generus tidak ditemukan atau di luar lingkup Anda.") },
     )
 
@@ -143,7 +147,7 @@ private fun GenerusFormBody(data: GenerusFormData, model: GenerusFormVm, onSaved
         FormColumn(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp)) {
             if (error != null) InfoBanner(error!!, tone = BannerTone.Error)
             if (e == null) {
-                SelectField("Kelompok", data.kelompok, kelompok, { "Kelompok ${it.name}" }, { kelompok = it }, group = { "Desa ${it.desaName}" })
+                UnitPickerField("Kelompok", data.tree, kelompok?.id, { id -> kelompok = data.kelompok.firstOrNull { it.id == id } }, placeholder = "Pilih kelompok")
             }
             TextInput("Nama lengkap", name, { name = it })
             Column {

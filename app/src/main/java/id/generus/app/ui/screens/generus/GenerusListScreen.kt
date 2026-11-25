@@ -1,5 +1,7 @@
 package id.generus.app.ui.screens.generus
 
+import id.generus.app.ui.components.UnitPickerField
+import id.generus.app.data.model.TreeUnit
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -74,14 +76,14 @@ import kotlinx.coroutines.launch
 class GenerusListVm(c: AppContainer) : LoadVm<GenerusPage>(c) {
     private val _filters = MutableStateFlow(GenerusFilters())
     val filters: StateFlow<GenerusFilters> = _filters.asStateFlow()
-    private val _units = MutableStateFlow<List<ScopeUnit>>(emptyList())
-    val units: StateFlow<List<ScopeUnit>> = _units.asStateFlow()
+    private val _units = MutableStateFlow<List<TreeUnit>>(emptyList())
+    val units: StateFlow<List<TreeUnit>> = _units.asStateFlow()
     private var page = 1
     private var searchJob: Job? = null
 
     init {
         load()
-        viewModelScope.launch { runCatching { _units.value = c.generus.scopeUnits("read") } }
+        viewModelScope.launch { runCatching { _units.value = c.units.tree(c.generus.scopeUnits("read").map { it.id }) } }
     }
 
     override suspend fun fetch(): GenerusPage {
@@ -141,7 +143,7 @@ fun GenerusListScreen(nav: NavHostController) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SearchPill(filters.q, { model.update(filters.copy(q = it), debounce = true) }, "Cari nama generus")
-                    ChipRow(listOf<JenjangFilter?>(null) + JenjangFilter.entries, filters.jenjang, { it?.label?.removeSuffix(" (semua)") ?: "Semua" }, { model.update(filters.copy(jenjang = it)) })
+                    ChipRow(listOf<JenjangFilter?>(null) + JenjangFilter.entries.filter { it != JenjangFilter.Remaja && it != JenjangFilter.Caberawit }, filters.jenjang, { it?.label?.removeSuffix(" (semua)") ?: "Semua" }, { model.update(filters.copy(jenjang = it)) })
                 }
             }
             val data = state.data
@@ -194,18 +196,11 @@ private fun GenerusRow(g: GenerusListItem, onClick: () -> Unit) {
 }
 
 @Composable
-private fun FilterSheet(current: GenerusFilters, units: List<ScopeUnit>, onDismiss: () -> Unit, onApply: (GenerusFilters) -> Unit) {
-    var unit by remember { mutableStateOf(units.firstOrNull { it.id == current.unitId }) }
+private fun FilterSheet(current: GenerusFilters, units: List<TreeUnit>, onDismiss: () -> Unit, onApply: (GenerusFilters) -> Unit) {
+    var unit by remember { mutableStateOf(current.unitId) }
     var status by remember { mutableStateOf(current.status) }
     BottomSheet("Filter", onDismiss) {
-        SelectField(
-            "Wilayah",
-            listOf<ScopeUnit?>(null) + units,
-            unit,
-            { u -> when { u == null -> "Semua wilayah saya"; u.level == UnitLevel.desa -> "Seluruh Desa ${u.name}"; else -> "Kelompok ${u.name}" } },
-            { unit = it },
-            group = { it?.let { u -> "Desa ${u.desaName}" } },
-        )
+        UnitPickerField("Wilayah", units, unit, { unit = it }, emptyLabel = "Semua wilayah")
         SelectField(
             "Status",
             listOf<GenerusStatus?>(GenerusStatus.aktif, GenerusStatus.pindah_sambung, GenerusStatus.menikah, null),
@@ -215,7 +210,7 @@ private fun FilterSheet(current: GenerusFilters, units: List<ScopeUnit>, onDismi
         )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             SecondaryButton("Atur ulang", onClick = { onApply(current.copy(unitId = null, status = GenerusStatus.aktif)) }, modifier = Modifier.weight(1f))
-            PrimaryButton("Terapkan", onClick = { onApply(current.copy(unitId = unit?.id, status = status)) }, modifier = Modifier.weight(1f))
+            PrimaryButton("Terapkan", onClick = { onApply(current.copy(unitId = unit, status = status)) }, modifier = Modifier.weight(1f))
         }
     }
 }

@@ -91,7 +91,7 @@ class PeriodDetailVm(c: AppContainer, private val id: String) : LoadVm<PeriodDet
 
     override suspend fun fetch(): PeriodDetailData {
         val period = c.kurikulum.periods().firstOrNull { it.id == id } ?: throw UserError("Periode tidak ditemukan atau belum terbit.")
-        val jenjang = c.agenda.jenjang()
+        val jenjang = c.agenda.jenjang(kegiatan = true)
         val current = jenjang.firstOrNull { it.id == jenjangId.value } ?: jenjang.firstOrNull { it.name == "Remaja" } ?: jenjang.first()
         return PeriodDetailData(period, jenjang, current, c.kurikulum.targets(period.id, current.id))
     }

@@ -79,6 +79,8 @@ fun AppCard(
     onClick: (() -> Unit)? = null,
     padding: Dp = 16.dp,
     color: Color = MaterialTheme.colorScheme.surface,
+    /** Motif lingkaran bergaris di pojok (hanya merek KLIIK JM). */
+    motif: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val shape = RoundedCornerShape(16.dp)
@@ -88,9 +90,10 @@ fun AppCard(
             modifier
                 .appear()
                 .then(if (onClick != null) Modifier.pressScale(interaction) else Modifier)
-                .shadow(2.dp, shape, ambientColor = Palette.Green950.copy(alpha = 0.06f), spotColor = Palette.Green950.copy(alpha = 0.08f))
+                .shadow(2.dp, shape, ambientColor = GenerusTheme.extra.shadow.copy(alpha = 0.06f), spotColor = GenerusTheme.extra.shadow.copy(alpha = 0.08f))
                 .clip(shape)
                 .background(color)
+                .then(if (motif) Modifier.kliikMotif() else Modifier)
                 .then(if (onClick != null) Modifier.clickable(interaction, LocalIndication.current, role = Role.Button, onClick = onClick) else Modifier)
                 .padding(padding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -292,7 +295,7 @@ fun ListCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() 
             modifier
                 .appear()
                 .fillMaxWidth()
-                .shadow(2.dp, shape, ambientColor = Palette.Green950.copy(alpha = 0.06f), spotColor = Palette.Green950.copy(alpha = 0.08f))
+                .shadow(2.dp, shape, ambientColor = GenerusTheme.extra.shadow.copy(alpha = 0.06f), spotColor = GenerusTheme.extra.shadow.copy(alpha = 0.08f))
                 .clip(shape)
                 .background(MaterialTheme.colorScheme.surface)
                 .animateContentSize(tween(DUR_ENTER, easing = EaseOutSoft)),
@@ -403,7 +406,7 @@ fun OfflineStrip(text: String = "Anda sedang offline. Presensi disimpan di peran
 /** Kotak statistik: judul kecil + angka besar (Lora). */
 @Composable
 fun StatBox(title: String, value: String, modifier: Modifier = Modifier, valueColor: Color = MaterialTheme.colorScheme.onSurface) {
-    AppCard(modifier, padding = 12.dp) {
+    AppCard(modifier, padding = 12.dp, motif = true) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(value, style = MaterialTheme.typography.headlineSmall, color = valueColor, fontWeight = FontWeight.SemiBold)

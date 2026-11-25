@@ -48,7 +48,8 @@ fun UserRole.label(): String =
 
 fun jenjangLabel(jenjang: String, kategori: String?): String = if (kategori != null) "$jenjang $kategori" else jenjang
 
-val Me.isSuperadmin: Boolean get() = roles.any { it.role == AppRole.superadmin }
+/** Superadmin sistem, atau superadmin di sebuah daerah (lingkup akun & wilayah daerah itu). */
+val Me.isSuperadmin: Boolean get() = isSystemAdmin || roles.any { it.role == AppRole.superadmin }
 
 /** Boleh melihat data generus, agenda, presensi, laporan (semua peran kecuali Tim Kurikulum). */
 val Me.canReadGenerus: Boolean get() = roles.any { it.role != AppRole.kurikulum }

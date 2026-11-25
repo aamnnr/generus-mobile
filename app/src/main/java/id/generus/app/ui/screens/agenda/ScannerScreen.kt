@@ -1,5 +1,16 @@
 package id.generus.app.ui.screens.agenda
 
+import id.generus.app.ui.components.GhostButton
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Check
+import id.generus.app.data.LogEntry
+import id.generus.app.data.ScanGate
+import id.generus.app.data.pushLog
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -105,7 +116,26 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-data class ScanEvent(val result: ScanResult, val at: Instant = Instant.now())
+/** Kunci riwayat: orang yang sama, atau jenis pesan galat yang sama, digabung jadi satu baris. */
+private fun resultKey(r: ScanResult): String = when (r) {
+    is ScanResult.Ok -> "p:${r.name}|${r.kelompok}"
+    is ScanResult.Duplicate -> "p:${r.name}|${r.kelompok}"
+    is ScanResult.Closed -> "c:${r.reason}"
+    ScanResult.Unknown -> "unknown"
+    ScanResult.Invalid -> "invalid"
+}
+
+/** "pukul 07.12", atau "24 Okt pukul 07.12" bila bukan hari ini. */
+internal fun recordedLabel(at: Instant?, now: Instant = Instant.now()): String {
+    if (at == null) return ""
+    val zone = java.time.ZoneId.systemDefault()
+    val locale = java.util.Locale.forLanguageTag("id-ID")
+    val time = java.time.format.DateTimeFormatter.ofPattern("HH.mm", locale).withZone(zone).format(at)
+    val sameDay = at.atZone(zone).toLocalDate() == now.atZone(zone).toLocalDate()
+    return if (sameDay) " pukul $time" else " ${java.time.format.DateTimeFormatter.ofPattern("d MMM", locale).withZone(zone).format(at)} pukul $time"
+}
+
+internal fun duplicateText(r: ScanResult.Duplicate): String = "sudah tercatat${recordedLabel(r.recordedAt)} (${r.status.label})"
 
 class ScannerVm(private val c: AppContainer, private val agendaId: String) : ViewModel() {
     val agenda = c.presensi.observeScanAgenda(agendaId)
@@ -160,16 +190,13 @@ fun ScannerScreen(nav: NavHostController, agendaId: String) {
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { hasCamera = it }
     LaunchedEffect(Unit) { if (!hasCamera) permission.launch(Manifest.permission.CAMERA) }
 
-    var last by remember { mutableStateOf<ScanEvent?>(null) }
-    val history = remember { mutableStateListOf<ScanEvent>() }
+    var history by remember { mutableStateOf<List<LogEntry<ScanResult>>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
 
     fun show(r: ScanResult) {
-        val e = ScanEvent(r)
-        last = e
-        history.add(0, e)
-        if (history.size > 20) history.removeAt(history.lastIndex)
+        // Scan ulang orang yang baru dicatat tetap menampilkan status awalnya (mis. "Hadir").
+        history = pushLog(history, resultKey(r), r, System.currentTimeMillis(), keep = { prev, _ -> prev is ScanResult.Ok })
         feedback.play(r)
     }
 
@@ -207,13 +234,13 @@ fun ScannerScreen(nav: NavHostController, agendaId: String) {
                 return@LazyColumn
             }
             if (downloadError != null) item { InfoBanner("${downloadError} Memakai daftar unduhan ${Instant.ofEpochMilli(agenda!!.downloadedAt).formatDateTime()}.", tone = BannerTone.Warning) }
-            item { ResultPanel(last) }
+            item { ResultPanel(history.firstOrNull()) }
             item {
                 if (hasCamera) {
                     CameraBox(onCode = { raw -> scope.launch { show(model.scan(raw)) } })
                 } else {
                     Column(
-                        Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(20.dp)).background(Color(0xFF0E2A20)).padding(24.dp),
+                        Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(20.dp)).background(id.generus.app.ui.theme.GenerusTheme.extra.heroDeep).padding(24.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
@@ -253,10 +280,7 @@ fun ScannerScreen(nav: NavHostController, agendaId: String) {
                     }
                 }
             }
-            if (history.isNotEmpty()) {
-                item { Text("Scan terakhir", style = MaterialTheme.typography.titleSmall) }
-                items(history.take(10), key = { it.at.toEpochMilli().toString() + it.hashCode() }) { e -> HistoryRow(e) }
-            }
+            if (history.isNotEmpty()) item { ScanLog(history) }
         }
     }
 }
@@ -275,18 +299,19 @@ private fun SearchRow(r: RosterItem, status: String?, onClick: () -> Unit) {
 
 /** Panel hasil di atas kamera: hijau = tercatat, kuning = sudah tercatat, merah = ditolak. */
 @Composable
-private fun ResultPanel(e: ScanEvent?) {
+private fun ResultPanel(e: LogEntry<ScanResult>?) {
     val x = GenerusTheme.extra
-    val (bg, title, sub) = when (val r = e?.result) {
+    val (bg, title, sub) = when (val r = e?.last) {
         null -> Triple(MaterialTheme.colorScheme.surfaceVariant, "Arahkan kamera ke kartu QR", "Hasil scan tampil di sini.")
         is ScanResult.Ok -> Triple(x.hadir.solid, r.name, "${r.kelompok} · ${r.status.label}")
-        is ScanResult.Duplicate -> Triple(x.terlambat.solid, r.name, "Sudah tercatat: ${r.status.label} · ${r.kelompok}")
+        is ScanResult.Duplicate -> Triple(x.terlambat.solid, r.name, "${r.kelompok} · ${duplicateText(r)}")
         ScanResult.Unknown -> Triple(x.alpa.solid, "Bukan peserta sasaran", "Kartu tidak dikenal, sudah tidak aktif, atau di luar sasaran agenda.")
         ScanResult.Invalid -> Triple(x.alpa.solid, "Bukan kartu Generus", "QR tidak dikenali. Pastikan memindai kartu generus.")
         is ScanResult.Closed -> Triple(x.alpa.solid, "Tidak bisa mencatat", r.reason)
     }
     val color by animateColorAsState(bg, tween(300), label = "scan")
     val fg = if (e == null) MaterialTheme.colorScheme.onSurfaceVariant else Color.White
+    Box(Modifier.fillMaxWidth()) {
     Column(
         Modifier.fillMaxWidth().heightIn(min = 112.dp).clip(RoundedCornerShape(20.dp)).background(color).padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
@@ -294,30 +319,118 @@ private fun ResultPanel(e: ScanEvent?) {
         Text(title, style = if (e == null) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall, color = fg, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(sub, style = MaterialTheme.typography.bodyMedium, color = fg.copy(alpha = 0.9f))
     }
+    if (e != null && e.count > 1) {
+        Text(
+            "discan ${e.count}×",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = 0.22f)).padding(horizontal = 8.dp, vertical = 2.dp),
+        )
+    }
+    }
 }
 
+private enum class Tone { Ok, Repeat, Error }
+
+private fun toneOf(v: ScanResult): Tone = when (v) {
+    is ScanResult.Ok -> Tone.Ok
+    is ScanResult.Duplicate -> Tone.Repeat
+    else -> Tone.Error
+}
+
+private fun hhmm(ms: Long): String = java.time.format.DateTimeFormatter.ofPattern("HH.mm").withZone(java.time.ZoneId.systemDefault()).format(Instant.ofEpochMilli(ms))
+
+private const val LOG_PREVIEW = 8
+
+/**
+ * Riwayat scan sesi ini: satu baris per orang (atau per jenis galat), terbaru di atas.
+ * Ikon & warna = hasilnya (hijau tercatat, kuning sudah tercatat/scan ulang, merah ditolak).
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun HistoryRow(e: ScanEvent) {
+private fun ScanLog(entries: List<LogEntry<ScanResult>>) {
     val x = GenerusTheme.extra
-    val (name, meta, badge) = when (val r = e.result) {
-        is ScanResult.Ok -> Triple(r.name, r.kelompok, r.status.label to x.of(r.status))
-        is ScanResult.Duplicate -> Triple(r.name, r.kelompok, "Sudah" to x.terlambat)
-        ScanResult.Unknown -> Triple("Tidak dikenal", "Bukan peserta sasaran", "Ditolak" to x.alpa)
-        ScanResult.Invalid -> Triple("QR tidak valid", "Bukan kartu Generus", "Ditolak" to x.alpa)
-        is ScanResult.Closed -> Triple("Tidak dicatat", r.reason, "Ditolak" to x.alpa)
-    }
-    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(name, style = MaterialTheme.typography.titleSmall)
-                Text("$meta · ${e.at.formatTime()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    var all by remember { mutableStateOf(false) }
+    val fresh = entries.count { it.value is ScanResult.Ok }
+    val repeats = entries.sumOf { e -> when (e.value) { is ScanResult.Ok -> e.count - 1; is ScanResult.Duplicate -> e.count; else -> 0 } }
+    val rejected = entries.sumOf { e -> if (e.value is ScanResult.Ok || e.value is ScanResult.Duplicate) 0 else e.count }
+    val shown = if (all) entries else entries.take(LOG_PREVIEW)
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Riwayat scan", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                StatusBadge("$fresh tercatat", x.hadir)
+                if (repeats > 0) StatusBadge("$repeats ulang", x.terlambat)
+                if (rejected > 0) StatusBadge("$rejected ditolak", x.alpa)
             }
-            StatusBadge(badge.first, badge.second)
+        }
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
+            Column {
+                shown.forEachIndexed { i, e ->
+                    if (i > 0) RowDivider()
+                    ScanLogRow(e, latest = i == 0)
+                }
+            }
+        }
+        if (entries.size > LOG_PREVIEW) {
+            GhostButton(if (all) "Tampilkan lebih sedikit" else "Tampilkan semua (${entries.size})", onClick = { all = !all }, modifier = Modifier.align(Alignment.CenterHorizontally))
         }
     }
 }
 
-/** Kamera 1:1 dengan bingkai bidik; memanggil `onCode` untuk tiap QR (sama tidak diulang < 2,5 dtk). */
+@Composable
+private fun ScanLogRow(e: LogEntry<ScanResult>, latest: Boolean) {
+    val x = GenerusTheme.extra
+    val v = e.value
+    val tone = toneOf(v)
+    val color = when (tone) { Tone.Ok -> x.hadir; Tone.Repeat -> x.terlambat; Tone.Error -> x.alpa }
+    val icon = when {
+        v is ScanResult.Closed -> Icons.Rounded.Lock
+        tone == Tone.Ok -> Icons.Rounded.Check
+        tone == Tone.Repeat -> Icons.Rounded.Replay
+        else -> Icons.Rounded.Close
+    }
+    val (title, detail) = when (v) {
+        // Jam tercatat hanya perlu disebut bila berbeda dari jam scan terakhir (di kanan).
+        is ScanResult.Ok -> v.name to "${v.kelompok} · ${v.status.label}" + (if (e.count > 1) " ${hhmm(e.firstAt)}" else "")
+        is ScanResult.Duplicate -> v.name to "${v.kelompok} · sudah tercatat" + (v.recordedAt?.let { " ${hhmm(it.toEpochMilli())}" } ?: "") + " (${v.status.label})"
+        ScanResult.Unknown -> "Kartu tidak dikenal" to "Bukan peserta agenda ini, atau kartunya sudah diganti."
+        ScanResult.Invalid -> "Bukan kartu Generus" to "QR yang terbaca bukan kartu dari aplikasi ini."
+        is ScanResult.Closed -> "Tidak bisa mencatat" to v.reason
+    }
+    val repeatsLabel = if (v is ScanResult.Ok) "scan ulang ${e.count - 1}×" else "${e.count}×"
+
+    Row(
+        Modifier.fillMaxWidth()
+            .background(if (latest) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f) else Color.Transparent)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(32.dp).clip(CircleShape).background(color.soft), contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, tint = color.solid, modifier = Modifier.size(16.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(hhmm(e.at), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (e.count > 1) {
+                val badge = if (tone == Tone.Error) x.alpa else x.terlambat
+                Text(
+                    repeatsLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = badge.solid,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(badge.soft).padding(horizontal = 6.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Kamera 1:1 dengan bingkai bidik; satu kartu diproses sekali selama masih di depan kamera (ScanGate). */
 @OptIn(ExperimentalGetImage::class)
 @Composable
 private fun CameraBox(onCode: (String) -> Unit) {
@@ -329,7 +442,7 @@ private fun CameraBox(onCode: (String) -> Unit) {
     val scanner = remember {
         BarcodeScanning.getClient(BarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build())
     }
-    val lastCode = remember { arrayOf("", 0L) }
+    val gate = remember { ScanGate() }
     val currentOnCode by androidx.compose.runtime.rememberUpdatedState(onCode)
 
     DisposableEffect(Unit) {
@@ -359,10 +472,7 @@ private fun CameraBox(onCode: (String) -> Unit) {
                         scanner.process(InputImage.fromMediaImage(media, proxy.imageInfo.rotationDegrees))
                             .addOnSuccessListener { codes ->
                                 val raw = codes.firstOrNull()?.rawValue ?: return@addOnSuccessListener
-                                val now = System.currentTimeMillis()
-                                if (raw == lastCode[0] && now - (lastCode[1] as Long) < 2500) return@addOnSuccessListener
-                                lastCode[0] = raw
-                                lastCode[1] = now
+                                if (!gate.accept(raw)) return@addOnSuccessListener
                                 ContextCompat.getMainExecutor(ctx).execute { currentOnCode(raw) }
                             }
                             .addOnCompleteListener { proxy.close() }

@@ -1,5 +1,16 @@
 package id.generus.app.ui.screens.akun
 
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import id.generus.app.core.Brand
+import id.generus.app.ui.components.AppCard
+import id.generus.app.ui.components.heroBackground
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -35,7 +46,6 @@ import androidx.compose.ui.unit.dp
 import id.generus.app.R
 import id.generus.app.core.userMessage
 import id.generus.app.ui.appContainer
-import id.generus.app.ui.components.AppCard
 import id.generus.app.ui.components.BannerTone
 import id.generus.app.ui.components.InfoBanner
 import id.generus.app.ui.components.MosqueSilhouette
@@ -75,6 +85,55 @@ fun LoginScreen(notice: String?) {
         }
     }
 
+    @Composable
+    fun Form() {
+        if (notice != null) InfoBanner(notice, tone = BannerTone.Warning)
+        if (error != null) InfoBanner(error!!, tone = BannerTone.Error, icon = Icons.Rounded.ErrorOutline)
+        TextInput("Email", email, { email = it }, keyboardType = KeyboardType.Email)
+        TextInput("Password", password, { password = it }, password = true)
+        PrimaryButton("Masuk", onClick = ::submit, loading = busy, modifier = Modifier.fillMaxWidth())
+    }
+
+    if (Brand.isKliik) {
+        // Padanan login PWA merek KLIIK JM: panel hero navy berlogo di atas, kartu form menumpang.
+        Column(
+            Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).imePadding().verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                Modifier.fillMaxWidth().heightIn(min = 288.dp).height((LocalConfiguration.current.screenHeightDp * 0.42f).dp)
+                    .heroBackground(RoundedCornerShape(0.dp)).statusBarsPadding(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Image(
+                    painterResource(R.drawable.kliik_logo_putih),
+                    contentDescription = Brand.fullName,
+                    modifier = Modifier.fillMaxWidth(0.78f).widthIn(max = 416.dp).offset(y = (-12).dp),
+                    contentScale = ContentScale.FillWidth,
+                )
+            }
+            AppCard(
+                Modifier.offset(y = (-32).dp).padding(horizontal = 16.dp).widthIn(max = 384.dp).fillMaxWidth(),
+                padding = 24.dp,
+            ) {
+                Column {
+                    Text("Assalamu'alaikum", style = MaterialTheme.typography.titleLarge)
+                    Text("Masuk dengan akun dari admin daerah.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Form()
+                Text(
+                    "Belum punya akun atau lupa password? Hubungi superadmin daerah.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Spacer(Modifier.navigationBarsPadding())
+        }
+        return
+    }
+
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         MosqueSilhouette(
             GenerusTheme.extra.brass.copy(alpha = 0.18f),
@@ -97,11 +156,7 @@ fun LoginScreen(notice: String?) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (notice != null) InfoBanner(notice, tone = BannerTone.Warning)
-                if (error != null) InfoBanner(error!!, tone = BannerTone.Error, icon = Icons.Rounded.ErrorOutline)
-                TextInput("Email", email, { email = it }, keyboardType = KeyboardType.Email)
-                TextInput("Password", password, { password = it }, password = true)
-                PrimaryButton("Masuk", onClick = ::submit, loading = busy, modifier = Modifier.fillMaxWidth())
+                Form()
             }
             Spacer(Modifier.height(16.dp))
             Text(

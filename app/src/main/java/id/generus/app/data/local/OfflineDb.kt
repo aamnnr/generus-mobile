@@ -43,6 +43,8 @@ data class RosterItem(
     val tokenHash: String?,
     /** Status dari server saat diunduh (atau yang dicatat di perangkat ini). */
     val status: String?,
+    /** Kapan status itu tercatat (ms epoch): dari server, atau diisi perangkat saat scan pertama. */
+    val recordedAt: Long? = null,
 )
 
 @Entity(tableName = "scan_agendas", primaryKeys = ["id"])
@@ -117,8 +119,8 @@ interface RosterDao {
     @Query("SELECT * FROM roster WHERE agendaId = :agendaId ORDER BY name")
     fun observeRoster(agendaId: String): Flow<List<RosterItem>>
 
-    @Query("UPDATE roster SET status = :status WHERE agendaId = :agendaId AND generusId = :generusId")
-    suspend fun setStatus(agendaId: String, generusId: String, status: String)
+    @Query("UPDATE roster SET status = :status, recordedAt = :recordedAt WHERE agendaId = :agendaId AND generusId = :generusId")
+    suspend fun setStatus(agendaId: String, generusId: String, status: String, recordedAt: Long)
 
     @Query("DELETE FROM roster WHERE agendaId = :agendaId")
     suspend fun deleteRoster(agendaId: String)
@@ -144,12 +146,20 @@ interface RosterDao {
     suspend fun clearAgendas()
 }
 
-@Database(entities = [OutboxItem::class, RosterItem::class, ScanAgenda::class], version = 1)
+@Database(entities = [OutboxItem::class, RosterItem::class, ScanAgenda::class], version = 2)
 abstract class OfflineDb : RoomDatabase() {
     abstract fun outbox(): OutboxDao
     abstract fun roster(): RosterDao
 
     companion object {
-        fun create(context: Context): OfflineDb = Room.databaseBuilder(context, OfflineDb::class.java, "generus-offline.db").build()
+        /** v2: jam tercatat di roster pemindai. */
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE roster ADD COLUMN recordedAt INTEGER")
+            }
+        }
+
+        fun create(context: Context): OfflineDb =
+            Room.databaseBuilder(context, OfflineDb::class.java, "generus-offline.db").addMigrations(MIGRATION_1_2).build()
     }
 }

@@ -45,6 +45,7 @@ class AppContainer(context: Context) {
     val network = NetworkMonitor(context)
     val cache = JsonCache(context)
     val theme = ThemePrefs(context)
+    val units = id.generus.app.data.UnitDirectory(supabase)
     val presensi = PresensiStore(context, db, agenda, scope)
     val session = SessionManager(context, auth, scope)
 }

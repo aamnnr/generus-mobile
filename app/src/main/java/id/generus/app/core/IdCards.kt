@@ -8,6 +8,8 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.RadialGradient
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.os.Build
@@ -53,6 +55,8 @@ class IdCards(context: Context) {
         private const val GREEN = 0xFF1A4A39.toInt()
         private const val BRASS = 0xFFC8A45C.toInt()
         private const val CREAM = 0xFFFBF8F1.toInt()
+        private const val NAVY = 0xFF1A2189.toInt()
+        private const val CYAN = 0xFF008CD7.toInt()
         private const val PT_PER_MM = 72f / 25.4f
 
         private fun weight(base: Typeface, w: Int): Typeface =
@@ -66,6 +70,25 @@ class IdCards(context: Context) {
         val canvas = Canvas(bmp)
         canvas.scale(scale, scale)
         draw(canvas, card)
+        return bmp
+    }
+
+    /** Gambar QR besar + nama + token untuk dibagikan (padanan "Unduh QR (PNG)" di PWA). */
+    fun qrBitmap(card: KartuRow): Bitmap {
+        val qr = 1000
+        val pad = 140 // zona kosong ≥ 4 modul di sekeliling QR (standar pemindai)
+        val bmp = Bitmap.createBitmap(qr + pad * 2, qr + pad * 2 + 150, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(android.graphics.Color.WHITE)
+        c.drawBitmap(Qr.bitmap(Qr.payload(card.token), qr, margin = 0), pad.toFloat(), pad.toFloat(), null)
+        val cx = bmp.width / 2f
+        val name = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { typeface = sans600; color = 0xFF171717.toInt(); textAlign = Paint.Align.CENTER; textSize = 64f }
+        while (name.measureText(card.name) > bmp.width - pad * 2 && name.textSize > 28f) name.textSize -= 2f
+        val fm = name.fontMetrics
+        c.drawText(card.name, cx, qr + pad + 60f - (fm.ascent + fm.descent) / 2, name)
+        val mono = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE; color = 0xFF525252.toInt(); textAlign = Paint.Align.CENTER; textSize = 40f }
+        val fm2 = mono.fontMetrics
+        c.drawText(card.token.chunked(4).joinToString(" "), cx, qr + pad + 125f - (fm2.ascent + fm2.descent) / 2, mono)
         return bmp
     }
 
@@ -121,7 +144,166 @@ class IdCards(context: Context) {
         drawText(fitted, xMm * K, baselineMm * K, p)
     }
 
-    private fun draw(c: Canvas, card: KartuRow) {
+    private fun draw(c: Canvas, card: KartuRow) = if (Brand.isKliik) drawKliik(c, card) else drawGenerus(c, card)
+
+    /** Nama maks. 2 baris, rata tengah selebar isi kartu; kembalikan tingginya (mm). */
+    private fun drawName(c: Canvas, name: String, yMm: Float, namePaint: TextPaint, lineSpacing: Float): Float {
+        val nameWidth = ((W - 7) * K).toInt()
+        fun layout(text: String, ellipsize: Boolean) = StaticLayout.Builder.obtain(text, 0, text.length, namePaint, nameWidth)
+            .setAlignment(Layout.Alignment.ALIGN_CENTER)
+            .setLineSpacing(0f, lineSpacing)
+            .setIncludePad(false)
+            .apply { if (ellipsize) setMaxLines(2).setEllipsize(TextUtils.TruncateAt.END) }
+            .build()
+        // Nama yang tidak muat 2 baris: kata terakhir disingkat jadi huruf awal + titik.
+        val variants = nameVariants(name)
+        val nameLayout = variants.firstNotNullOfOrNull { v -> layout(v, false).takeIf { it.lineCount <= 2 } }
+            ?: layout(variants.last(), true)
+        c.save()
+        c.translate(3.5f * K, yMm * K)
+        nameLayout.draw(c)
+        c.restore()
+        return nameLayout.height / K
+    }
+
+    /** Kotak QR 27 mm berpusat di `cx`: latar putih, QR hitam di atas putih (tetap terbaca dicetak hitam-putih). */
+    private fun drawQrBox(c: Canvas, card: KartuRow, cx: Float, y: Float, radius: Float, border: Float, borderColor: Int): RectF {
+        val box = RectF((cx - 13.5f) * K, y * K, (cx + 13.5f) * K, (y + 27) * K)
+        c.drawRoundRect(box, radius * K, radius * K, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
+        val half = border / 2 * K
+        c.drawRoundRect(
+            RectF(box.left + half, box.top + half, box.right - half, box.bottom - half), radius * K, radius * K,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = border * K; color = borderColor },
+        )
+        val inset = (1.2f + border) * K
+        c.drawBitmap(
+            Qr.bitmap(Qr.payload(card.token), 400, margin = 0),
+            null,
+            RectF(box.left + inset, box.top + inset, box.right - inset, box.bottom - inset),
+            Paint().apply { isFilterBitmap = false },
+        )
+        return box
+    }
+
+    /**
+     * Kartu merek KLIIK JM (globals.css `.brand-kliik .idc-*`): kepala navy bermotif garis
+     * miring & cahaya cyan dengan wordmark di tengah, siku cyan di QR, kaki navy.
+     */
+    private fun drawKliik(c: Canvas, card: KartuRow) {
+        c.save()
+        c.scale(1f / K, 1f / K)
+        val w = W * K
+        val h = H * K
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+        c.clipPath(Path().apply { addRoundRect(RectF(0f, 0f, w, h), 3.2f * K, 3.2f * K, Path.Direction.CW) })
+        fill.color = Color.WHITE
+        c.drawRect(0f, 0f, w, h, fill)
+
+        // Kepala 24 mm, sudut bawah melengkung elips (50% × 3,5 mm).
+        val topH = 24 * K
+        val topPath = Path().apply {
+            addRoundRect(RectF(0f, 0f, w, topH), floatArrayOf(0f, 0f, 0f, 0f, w / 2, 3.5f * K, w / 2, 3.5f * K), Path.Direction.CW)
+        }
+        fill.color = NAVY
+        c.drawPath(topPath, fill)
+        c.save()
+        c.clipPath(topPath)
+        // radial-gradient(75% 140% at 100% 0%, cyan 55%, transparan di 70%)
+        val rx = 0.75f * w
+        val ry = 1.4f * topH
+        c.save()
+        c.scale(1f, ry / rx, w, 0f)
+        c.drawCircle(w, 0f, rx, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = RadialGradient(w, 0f, rx, intArrayOf(Color.argb(140, 0, 140, 215), Color.argb(0, 0, 140, 215)), floatArrayOf(0f, 0.7f), Shader.TileMode.CLAMP)
+        })
+        c.restore()
+        // Garis miring putih 6%, tebal 0,35 mm tiap 2,6 mm (arah 122°).
+        c.save()
+        c.rotate(32f, w / 2, topH / 2)
+        val stripe = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(15, 255, 255, 255) }
+        var sx = -w
+        while (sx < 2 * w) {
+            c.drawRect(sx, -w, sx + 0.35f * K, topH + w, stripe)
+            sx += 2.6f * K
+        }
+        c.restore()
+        c.restore()
+        drawSlot(c)
+
+        // Wordmark putih 30 mm di tengah, lalu nama daerah.
+        val markW = 30f
+        val markH = markW * KliikArt.WORDMARK_H / KliikArt.WORDMARK_W
+        c.save()
+        c.translate((W - markW) / 2 * K, 6.6f * K)
+        val s = markW * K / KliikArt.WORDMARK_W
+        c.scale(s, s)
+        c.translate(-KliikArt.WORDMARK_X, -KliikArt.WORDMARK_Y)
+        KliikArt.wordmarkPutih.forEach { sh ->
+            c.drawPath(PathParser.createPathFromPathData(sh.pathData), Paint(Paint.ANTI_ALIAS_FLAG).apply { color = sh.color })
+        }
+        c.restore()
+        c.text(daerahLabel(card), W / 2, 6.6f + markH + 1.3f + 2.05f, paint(2.35f, Color.argb(235, 255, 255, 255), sans600, spacingMm = 0.15f, align = Paint.Align.CENTER), W - 7)
+
+        // Isi: padding atas 3,2 mm, jarak 1,1 mm.
+        val cx = W / 2
+        var y = 24 + 3.2f
+        y += drawName(c, card.name, y, paint(4.1f, 0xFF1F2440.toInt(), sans800, spacingMm = -0.04f), 1.05f) + 1.1f
+        c.text("Kelompok ${card.kelompok} · Desa ${card.desa}", cx, y + 2.2f, paint(2.35f, 0xFF5B6178.toInt(), sans400, align = Paint.Align.CENTER), W - 7)
+        y += 2.95f + 1.1f + 0.4f
+
+        val pillText = "${jenjangLabel(card.jenjang, card.kategori)} · ${if (card.gender == Gender.L) "Putra" else "Putri"}"
+        val pillPaint = paint(2.3f, NAVY, sans700, align = Paint.Align.CENTER)
+        val pillW = (pillPaint.measureText(pillText) / K + 4.4f).coerceAtMost(W - 7)
+        val pillH = 3.9f
+        fill.color = 0xFFE3EEFB.toInt()
+        c.drawRoundRect(RectF((cx - pillW / 2) * K, y * K, (cx + pillW / 2) * K, (y + pillH) * K), pillH / 2 * K, pillH / 2 * K, fill)
+        c.text(pillText, cx, y + 2.75f, pillPaint, W - 9)
+        y += pillH + 1.1f + 2f
+
+        val box = drawQrBox(c, card, cx, y, 1.6f, 0.25f, 0xFFD6E3F3.toInt())
+        // Siku cyan 4 × 0,6 mm di keempat sudut, 0,7 mm di luar kotak.
+        val o = 0.7f * K
+        val len = 4f * K
+        val th = 0.6f * K
+        fill.color = CYAN
+        val corners = listOf(
+            Triple(box.left - o, box.top - o, 1 to 1),
+            Triple(box.right + o, box.top - o, -1 to 1),
+            Triple(box.left - o, box.bottom + o, 1 to -1),
+            Triple(box.right + o, box.bottom + o, -1 to -1),
+        )
+        for ((px, py, dir) in corners) {
+            val (dx, dy) = dir
+            val hx = if (dx > 0) px else px - len
+            val hy = if (dy > 0) py else py - th
+            c.drawRect(hx, hy, hx + len, hy + th, fill)
+            val vx = if (dx > 0) px else px - th
+            val vy = if (dy > 0) py else py - len
+            c.drawRect(vx, vy, vx + th, vy + len, fill)
+        }
+        y += 27 + 1.1f + 0.6f
+        c.text(card.token.chunked(4).joinToString(" "), cx, y + 2.4f, paint(2.1f, 0xFF5B6178.toInt(), Typeface.MONOSPACE, spacingMm = 0.25f, align = Paint.Align.CENTER))
+
+        // Kaki 6 mm navy, teks putih 1,95 mm.
+        fill.color = NAVY
+        c.drawRect(0f, h - 6f * K, w, h, fill)
+        c.text("Tunjukkan kartu ini saat presensi pengajian", cx, H - 2.3f, paint(1.95f, Color.WHITE, sans600, spacingMm = 0.05f, align = Paint.Align.CENTER), W - 4)
+        c.restore()
+    }
+
+    /** Lubang tali 13 × 2,8 mm (.idc-slot), garis putih 55%. */
+    private fun drawSlot(c: Canvas) {
+        c.drawRoundRect(
+            RectF((W / 2 - 6.5f) * K, 2.6f * K, (W / 2 + 6.5f) * K, 5.4f * K), 1.4f * K, 1.4f * K,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 0.3f * K; color = Color.argb(140, 255, 255, 255) },
+        )
+    }
+
+    private fun daerahLabel(card: KartuRow): String =
+        card.daerah?.let { if (Regex("^daerah\\b", RegexOption.IGNORE_CASE).containsMatchIn(it)) it else "Daerah $it" } ?: ""
+
+    /** Kartu desain lama (hijau tua + kuningan, logo masjid & bintang). */
+    private fun drawGenerus(c: Canvas, card: KartuRow) {
         c.save()
         c.scale(1f / K, 1f / K)
         val w = W * K

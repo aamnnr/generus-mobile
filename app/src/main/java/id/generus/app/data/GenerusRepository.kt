@@ -24,6 +24,10 @@ import kotlinx.serialization.json.putJsonArray
 
 /** Filter jenjang gabungan jenjang + kategori (padanan JENJANG_FILTERS). */
 enum class JenjangFilter(val label: String, val jenjang: String, val kategori: String?) {
+    Balita("Balita", "Balita", null),
+    Caberawit("Caberawit (semua)", "Caberawit", null),
+    CaberawitPaud("Caberawit PAUD/TK", "Caberawit", "PAUD/TK"),
+    CaberawitSd("Caberawit SD", "Caberawit", "SD"),
     PraRemaja("Pra Remaja", "Pra Remaja", null),
     Remaja("Remaja (semua)", "Remaja", null),
     RemajaPelajar("Remaja Pelajar", "Remaja", "Pelajar"),
@@ -101,13 +105,18 @@ class GenerusRepository(private val client: SupabaseClient) {
     /** Terbitkan kartu baru: token QR diganti sehingga kartu lama tidak berlaku. */
     suspend fun reissueCard(id: String) = client.rpcUnit("mobile_reissue_card", buildJsonObject { put("p_id", id) })
 
-    suspend fun kartu(unitId: String?, ids: List<String>?): List<KartuRow> = client.rpc(
-        "mobile_kartu",
-        buildJsonObject {
-            put("p_unit", unitId)
-            if (ids != null) putJsonArray("p_ids") { ids.forEach { add(JsonPrimitive(it)) } } else put("p_ids", null as String?)
-        },
-    )
+    suspend fun kartu(unitId: String?, ids: List<String>?): List<KartuRow> {
+        val rows = client.rpc<List<KartuRow>>(
+            "mobile_kartu",
+            buildJsonObject {
+                put("p_unit", unitId)
+                if (ids != null) putJsonArray("p_ids") { ids.forEach { add(JsonPrimitive(it)) } } else put("p_ids", null as String?)
+            },
+        )
+        // Balita (jenjang yang hanya didata) tidak dicetak kartunya.
+        val hidden = client.from("jenjang").select().decodeList<id.generus.app.data.model.Jenjang>().filter { !it.ikutKegiatan }.map { it.name }.toSet()
+        return if (hidden.isEmpty()) rows else rows.filter { it.jenjang !in hidden }
+    }
 
     suspend fun promotionCandidates(jenjang: String, kategori: String?, unitId: String): PromotionPage = client.rpc(
         "mobile_promotion_candidates",

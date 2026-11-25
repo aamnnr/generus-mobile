@@ -42,6 +42,8 @@ data class Me(
     val email: String? = null,
     val active: Boolean = true,
     val mustChangePassword: Boolean = false,
+    /** Superadmin sistem: boleh menambah daerah & mengelola semua daerah. */
+    val isSystemAdmin: Boolean = false,
     val roles: List<UserRole> = emptyList(),
 )
 
@@ -72,6 +74,8 @@ data class Jenjang(
     val name: String,
     val sortOrder: Int = 0,
     val jenjangKategori: List<Kategori> = emptyList(),
+    /** false = hanya didata (Balita): tidak ikut sasaran agenda, presensi, target, capaian, kartu QR. */
+    val ikutKegiatan: Boolean = true,
 ) {
     val kategori: List<Kategori> get() = jenjangKategori.sortedBy { it.sortOrder }
 }
@@ -119,6 +123,10 @@ data class MonthSummary(val agendas: Int = 0, val locked: Int = 0, val present: 
 
 @Serializable
 data class GenerusCounts(val total: Int = 0, val praRemaja: Int = 0, val remaja: Int = 0)
+
+/** Jumlah generus aktif satu jenjang (beranda). */
+@Serializable
+data class JenjangCount(val name: String, val n: Int)
 
 @Serializable
 data class ScanTask(val id: String, val title: String, val startsAt: IsoInstant, val unitName: String)
@@ -190,6 +198,59 @@ data class AgendaDetail(
     val isScanner: Boolean = false,
     val roster: List<RosterRow> = emptyList(),
     val scanners: List<ScannerRow> = emptyList(),
+    /** Rekap presensi per kelompok (mobile_agenda_detail). */
+    val summary: List<KelompokAttendance> = emptyList(),
+)
+
+/** Rekap presensi satu kelompok pada satu agenda (padanan KelompokSummary di PWA). */
+@Serializable
+data class KelompokAttendance(
+    val kelompokId: String,
+    val kelompok: String,
+    val desaId: String,
+    val desa: String,
+    val total: Int = 0,
+    val hadir: Int = 0,
+    val terlambat: Int = 0,
+    val izin: Int = 0,
+    val sakit: Int = 0,
+    val alpa: Int = 0,
+    val belum: Int = 0,
+) {
+    fun count(s: AttendanceStatus): Int = when (s) {
+        AttendanceStatus.hadir -> hadir
+        AttendanceStatus.terlambat -> terlambat
+        AttendanceStatus.izin -> izin
+        AttendanceStatus.sakit -> sakit
+        AttendanceStatus.alpa -> alpa
+    }
+
+    val present: Int get() = hadir + terlambat
+
+    /** (hadir + terlambat) / total, 0–1. */
+    val rate: Double get() = if (total > 0) present.toDouble() / total else 0.0
+
+    operator fun plus(o: KelompokAttendance) = copy(
+        total = total + o.total, hadir = hadir + o.hadir, terlambat = terlambat + o.terlambat,
+        izin = izin + o.izin, sakit = sakit + o.sakit, alpa = alpa + o.alpa, belum = belum + o.belum,
+    )
+
+    companion object {
+        val Empty = KelompokAttendance("", "", "", "")
+
+        /** Jumlahkan beberapa rekap (semua kelompok, atau satu desa). */
+        fun sum(list: List<KelompokAttendance>) = list.fold(Empty) { a, b -> a + b }
+    }
+}
+
+/** Unit untuk pemilih wilayah berjenjang. selectable = false untuk leluhur yang hanya judul cabang. */
+@Serializable
+data class TreeUnit(
+    val id: String,
+    val name: String,
+    val level: UnitLevel,
+    val parentId: String? = null,
+    val selectable: Boolean = true,
 )
 
 /** Baris untuk insert/update tabel agendas lewat PostgREST. */
@@ -230,6 +291,8 @@ data class ScanRosterDto(
     val desa: String,
     val tokenHash: String? = null,
     val status: AttendanceStatus? = null,
+    /** Kapan status itu tercatat (untuk "sudah tercatat pukul 07.12"). */
+    val recordedAt: IsoInstant? = null,
 )
 
 @Serializable

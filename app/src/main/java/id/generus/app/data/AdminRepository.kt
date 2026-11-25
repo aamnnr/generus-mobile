@@ -1,5 +1,7 @@
 package id.generus.app.data
 
+import kotlinx.serialization.json.jsonPrimitive
+import io.github.jan.supabase.postgrest.query.Columns
 import id.generus.app.core.UserError
 import id.generus.app.data.model.Account
 import id.generus.app.data.model.AppRole
@@ -34,6 +36,14 @@ class AdminRepository(private val client: SupabaseClient) {
     /** Trigger units_before_write memastikan desa di bawah daerah & kelompok di bawah desa. */
     suspend fun addUnit(parentId: String, level: UnitLevel, name: String) {
         client.from("units").insert(buildJsonObject { put("parent_id", parentId); put("level", level.name); put("name", name) })
+    }
+
+    /** Daerah baru (RLS: hanya superadmin sistem), lalu pembuatnya dijadikan superadmin di sana. */
+    suspend fun addDaerah(userId: String, name: String) {
+        val created = client.from("units").insert(buildJsonObject { put("level", "daerah"); put("name", name) }) { select(Columns.list("id")) }
+            .decodeSingle<JsonObject>()
+        val id = created["id"]?.jsonPrimitive?.content ?: error("Gagal membuat daerah.")
+        client.from("user_roles").insert(buildJsonObject { put("user_id", userId); put("unit_id", id); put("role", "superadmin") })
     }
 
     suspend fun renameUnit(id: String, name: String) {

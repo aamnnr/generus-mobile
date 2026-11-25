@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Latar jendela sebelum Compose tampil (merek KLIIK JM). -->
+    <color name="window_background">#F4F7FB</color>
+</resources>

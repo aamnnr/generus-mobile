@@ -189,7 +189,7 @@ fun validateRows(sheetRows: List<List<Any?>>, ctx: ImportContext): ImportResult 
         if (kelompokId == null) { rows += fail("Kelompok tidak ditemukan atau di luar lingkup Anda"); continue }
         val jenjangKey = norm(get("jenjang")).replace(Regex("[^a-z]"), "")
         val j = ctx.jenjang.firstOrNull { norm(it.name).replace(Regex("[^a-z]"), "") == jenjangKey }
-            ?: run { rows += fail("Jenjang harus Pra Remaja atau Remaja"); null } ?: continue
+            ?: run { rows += fail("Jenjang harus salah satu dari: ${ctx.jenjang.joinToString(", ") { it.name }}"); null } ?: continue
         val katRaw = norm(get("kategori"))
         var kategoriId: String? = null
         if (j.kategori.isNotEmpty()) {

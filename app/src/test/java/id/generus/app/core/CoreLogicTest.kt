@@ -90,19 +90,80 @@ class AgendaTargetTest {
 }
 
 class KenaikanTest {
-    private val juli = LocalDate.of(2026, 7, 10)
+    private val juli = LocalDate.of(2026, 7, 15)
+    private val nov = LocalDate.of(2026, 11, 9)
+    private fun d(s: String) = LocalDate.parse(s)
+    private fun sug(t: Transition, birth: String, school: String?, on: LocalDate = juli) = suggestPromotion(t, d(birth), school, on)
+    private fun pra(school: String?, birth: String = "2011-03-01", on: LocalDate = juli) = sug(Transition.PraKePelajar, birth, school, on)
 
-    @Test fun academicYear() {
+    @Test fun calendar() {
         assertEquals(LocalDate.of(2026, 7, 1), academicYearStart(juli))
-        assertEquals(LocalDate.of(2025, 7, 1), academicYearStart(LocalDate.of(2026, 3, 1)))
+        assertEquals(LocalDate.of(2026, 7, 1), academicYearStart(LocalDate.of(2027, 3, 1)))
+        assertTrue(isPromotionSeason(juli))
+        assertTrue(isPromotionSeason(LocalDate.of(2026, 8, 31)))
+        assertFalse(isPromotionSeason(LocalDate.of(2026, 9, 1)))
+        assertEquals(15, ageAt(d("2011-07-01"), LocalDate.of(2026, 7, 1)))
+        assertEquals(14, ageAt(d("2011-07-02"), LocalDate.of(2026, 7, 1)))
     }
 
-    @Test fun suggestions() {
-        assertTrue(isSuggested(Transition.PraKePelajar, LocalDate.of(2011, 6, 30), null, juli))
-        assertFalse(isSuggested(Transition.PraKePelajar, LocalDate.of(2012, 1, 1), null, juli))
-        assertTrue(isSuggested(Transition.PraKePelajar, LocalDate.of(2012, 1, 1), "SMP 2 kelas 9", juli))
-        assertTrue(isSuggested(Transition.PelajarKeMandiri, LocalDate.of(2008, 1, 1), "Lulus SMA", juli))
-        assertTrue(isSuggested(Transition.PelajarKeMandiri, LocalDate.of(2005, 1, 1), "kuliah semester 8", juli))
-        assertFalse(isSuggested(Transition.PelajarKeMandiri, LocalDate.of(2008, 1, 1), "kuliah semester 3", juli))
+    @Test fun suggested() {
+        assertTrue(sug(Transition.PraKePelajar, "2011-06-30", null).suggested)
+        assertFalse(sug(Transition.PraKePelajar, "2012-01-01", "SMP 3 kelas 8").suggested)
+        assertTrue(sug(Transition.PraKeMandiri, "2012-01-01", "SMPN 1 Kelas 9").suggested)
+        assertTrue(sug(Transition.PelajarKeMandiri, "2003-01-01", null).suggested)
+        assertFalse(sug(Transition.PelajarKeMandiri, "2007-01-01", "SMA 2 kelas 12").suggested)
+        assertTrue(sug(Transition.PelajarKeMandiri, "2004-05-05", "Kuliah semester 8").suggested)
+        assertFalse(sug(Transition.PelajarKeMandiri, "2005-05-05", "Kuliah semester 3").suggested)
+        assertEquals(Suggestion(false, "masih kelas 12"), sug(Transition.PelajarKeMandiri, "2002-01-01", "SMK kelas 12"))
+    }
+
+    @Test fun gradeFromSchoolField() {
+        assertEquals(8, gradeFromSchool("SMPN 2 kelas 8"))
+        assertEquals(9, gradeFromSchool("SMP 1 Trucuk kls 9"))
+        assertEquals(7, gradeFromSchool("SMP N 3 Kelas VII"))
+        assertEquals(9, gradeFromSchool("SMPN 1 Cawas 9A"))
+        assertEquals(9, gradeFromSchool("SMP Muh IX B"))
+        assertEquals(null, gradeFromSchool("SMP N 9 Klaten"))
+        assertEquals(null, gradeFromSchool("SMP N 2 Cawas"))
+        assertEquals(null, gradeFromSchool(null))
+    }
+
+    @Test fun caberawitDanBalita() {
+        val nov14 = LocalDate.of(2026, 11, 14)
+        val jul10 = LocalDate.of(2026, 7, 10)
+        fun s(t: Transition, birth: String, school: String?, on: LocalDate = nov14) = suggestPromotion(t, d(birth), school, on)
+        assertEquals(3, gradeFromSchool("SDN 2 Cawas kelas 3"))
+        assertEquals(6, gradeFromSchool("Kelas VI"))
+        assertEquals(6, gradeFromSchool("6A"))
+        assertEquals(null, gradeFromSchool("SDN 2 Cawas"))
+        assertFalse(s(Transition.SdKePra, "2013-01-01", "SDN 1 kelas 5").suggested)
+        assertFalse(s(Transition.SdKePra, "2014-01-01", "SDN 1 kelas 6").suggested)
+        assertTrue(s(Transition.SdKePra, "2014-01-01", "SDN 1 kelas 6", jul10).suggested)
+        assertTrue(s(Transition.SdKePra, "2015-01-01", "SMPN 3 Klaten").suggested)
+        assertEquals(Suggestion(true, "usia 12 per 1 Juli"), s(Transition.SdKePra, "2014-03-01", null))
+        assertFalse(s(Transition.SdKePra, "2015-03-01", null).suggested)
+        assertTrue(s(Transition.PaudKeSd, "2020-01-01", "MI Muhammadiyah").suggested)
+        assertFalse(s(Transition.PaudKeSd, "2020-01-01", "TK Aisyiyah").suggested)
+        assertTrue(s(Transition.PaudKeSd, "2020-01-01", null).suggested)
+        assertFalse(s(Transition.PaudKeSd, "2021-01-01", null).suggested)
+        assertTrue(s(Transition.BalitaKePaud, "2024-01-01", "PAUD Melati").suggested)
+        assertTrue(s(Transition.BalitaKePaud, "2022-03-01", null).suggested)
+        assertFalse(s(Transition.BalitaKePaud, "2023-03-01", null).suggested)
+        assertEquals("Pra Remaja", segmentLabel(JenjangRef("Pra Remaja", null)))
+        assertEquals("Caberawit SD", segmentLabel(JenjangRef("Caberawit", "SD")))
+    }
+
+    @Test fun praRemajaOnlyAfterGrade9() {
+        assertEquals(Suggestion(false, "tercatat kelas 7"), pra("SMPN 1 kelas 7"))
+        assertFalse(pra("SMPN 1 kelas 8").suggested)
+        assertTrue(pra("SMPN 1 kelas 9", "2012-01-01", juli).suggested)
+        assertEquals(Suggestion(false, "masih kelas 9 (naik Juli)"), pra("SMPN 1 kelas 9", "2011-03-01", nov))
+        assertTrue(pra("SMA N 1 Cawas", "2012-01-01").suggested)
+        assertTrue(pra("SMK Muh 2 Klaten", "2012-01-01").suggested)
+        assertTrue(pra("SMA/K N 1 Pedan", "2012-01-01").suggested)
+        assertTrue(pra("kelas 10", "2012-01-01").suggested)
+        assertFalse(pra("MTs N 1 Klaten", "2012-01-01").suggested)
+        assertEquals(Suggestion(true, "usia 15 per 1 Juli"), pra("SMP N 2 Cawas", "2011-06-30"))
+        assertFalse(pra(null, "2011-07-02").suggested)
     }
 }

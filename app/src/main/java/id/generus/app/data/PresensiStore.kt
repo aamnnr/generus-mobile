@@ -40,7 +40,8 @@ data class FlushResult(val sent: Int = 0, val rejected: Int = 0, val offline: Bo
 
 sealed interface ScanResult {
     data class Ok(val name: String, val kelompok: String, val status: AttendanceStatus) : ScanResult
-    data class Duplicate(val name: String, val kelompok: String, val status: AttendanceStatus) : ScanResult
+    /** recordedAt: kapan tercatat, untuk "sudah tercatat pukul 07.12" (mendeteksi kartu dipinjamkan). */
+    data class Duplicate(val name: String, val kelompok: String, val status: AttendanceStatus, val recordedAt: Instant?) : ScanResult
     data object Unknown : ScanResult
     data object Invalid : ScanResult
     data class Closed(val reason: String) : ScanResult
@@ -165,7 +166,7 @@ class PresensiStore(
             cancelledAt = a.cancelledAt?.toEpochMilli(),
             downloadedAt = System.currentTimeMillis(),
         )
-        roster.replace(agenda, r.rows.map { RosterItem(agendaId, it.generusId, it.name, it.gender.name, it.kelompok, it.desa, it.tokenHash, it.status?.name) })
+        roster.replace(agenda, r.rows.map { RosterItem(agendaId, it.generusId, it.name, it.gender.name, it.kelompok, it.desa, it.tokenHash, it.status?.name, it.recordedAt?.toEpochMilli()) })
         return agenda
     }
 
@@ -181,11 +182,14 @@ class PresensiStore(
     }
 
     private suspend fun record(item: RosterItem, mode: String, now: Instant, lateAfter: Instant): ScanResult {
-        currentStatus(item)?.let { return ScanResult.Duplicate(item.name, item.kelompok, it) }
+        currentStatus(item)?.let { existing ->
+            val at = item.recordedAt ?: outbox.get(item.agendaId, item.generusId)?.updatedAt
+            return ScanResult.Duplicate(item.name, item.kelompok, existing, at?.let(Instant::ofEpochMilli))
+        }
         val status = if (now.isAfter(lateAfter)) AttendanceStatus.terlambat else AttendanceStatus.hadir
         enqueue(listOf(AttendanceEntry(item.agendaId, item.generusId, status, mode)))
         // Catat juga di roster lokal: setelah antrian terkirim & dihapus, scan ulang tetap terdeteksi duplikat.
-        roster.setStatus(item.agendaId, item.generusId, status.name)
+        roster.setStatus(item.agendaId, item.generusId, status.name, now.toEpochMilli())
         return ScanResult.Ok(item.name, item.kelompok, status)
     }
 

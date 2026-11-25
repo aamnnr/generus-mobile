@@ -31,5 +31,25 @@ class IdCardsRenderTest {
         assertEquals(listOf("Ahmad"), cards.nameVariants("Ahmad"))
         val long = card.copy(name = "Muhammad Abdurrahman Al-Fatih Nur Hidayatullah", jenjang = "Remaja", kategori = "Pelajar", gender = Gender.P)
         File("build/kartu-preview-long.png").outputStream().use { cards.bitmap(long, 540).compress(Bitmap.CompressFormat.PNG, 100, it) }
+        File("build/kartu-preview-qr.png").outputStream().use { cards.qrBitmap(card).compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    /** Ikon & logo merek (vector drawable) ke PNG untuk diperiksa. */
+    @Test fun renderBrandDrawables() {
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        fun render(id: Int, name: String, w: Int, h: Int, bg: Int) {
+            val d = androidx.core.content.ContextCompat.getDrawable(ctx, id)!!
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val c = android.graphics.Canvas(bmp)
+            c.drawColor(bg)
+            d.setBounds(0, 0, w, h)
+            d.draw(c)
+            File("build/$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
+        render(id.generus.app.R.drawable.ic_launcher_foreground, "brand-launcher", 432, 432, android.graphics.Color.WHITE)
+        render(id.generus.app.R.drawable.ic_launcher_monochrome, "brand-launcher-mono", 432, 432, android.graphics.Color.DKGRAY)
+        render(id.generus.app.R.drawable.kliik_icon, "brand-icon", 256, 256, android.graphics.Color.LTGRAY)
+        render(id.generus.app.R.drawable.kliik_logo, "brand-logo", 937, 355, android.graphics.Color.WHITE)
+        render(id.generus.app.R.drawable.kliik_logo_putih, "brand-logo-putih", 937, 355, 0xFF1A2189.toInt())
     }
 }

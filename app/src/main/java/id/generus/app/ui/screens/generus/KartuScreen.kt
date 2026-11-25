@@ -1,5 +1,10 @@
 package id.generus.app.ui.screens.generus
 
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.QrCode2
+import id.generus.app.ui.components.SecondaryButton
+import id.generus.app.ui.components.UnitPickerField
+import id.generus.app.data.model.TreeUnit
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -61,8 +66,8 @@ import kotlinx.coroutines.withContext
 private const val MAX_CARDS = 600
 
 class KartuVm(private val c: AppContainer, private val generusId: String?, initialUnit: String?) : ViewModel() {
-    private val _units = MutableStateFlow<List<ScopeUnit>>(emptyList())
-    val units: StateFlow<List<ScopeUnit>> = _units.asStateFlow()
+    private val _units = MutableStateFlow<List<TreeUnit>>(emptyList())
+    val units: StateFlow<List<TreeUnit>> = _units.asStateFlow()
     private val _unitId = MutableStateFlow(initialUnit)
     val unitId: StateFlow<String?> = _unitId.asStateFlow()
     private val _cards = MutableStateFlow<List<KartuRow>?>(null)
@@ -75,7 +80,7 @@ class KartuVm(private val c: AppContainer, private val generusId: String?, initi
     init {
         viewModelScope.launch {
             runCatching { c.generus.scopeUnits("read") }.onSuccess { list ->
-                _units.value = list
+                _units.value = c.units.tree(list.map { it.id })
                 if (_unitId.value == null && generusId == null) {
                     // Hanya satu kelompok yang bisa ditulis: langsung tampilkan.
                     list.filter { it.level == UnitLevel.kelompok }.singleOrNull()?.let { _unitId.value = it.id }
@@ -85,8 +90,8 @@ class KartuVm(private val c: AppContainer, private val generusId: String?, initi
         }
     }
 
-    fun select(unit: ScopeUnit) {
-        _unitId.value = unit.id
+    fun select(unitId: String?) {
+        _unitId.value = unitId ?: return
         fetch()
     }
 
@@ -136,6 +141,29 @@ fun KartuScreen(nav: NavHostController, unitId: String?, generusId: String?) {
         }
     }
 
+    var pngBusy by remember { mutableStateOf<String?>(null) }
+
+    /** Kartu (±20 px/mm) atau QR satu generus sebagai PNG, lalu dibagikan/disimpan. */
+    fun exportPng(card: KartuRow, kind: String) {
+        pngBusy = kind
+        scope.launch {
+            try {
+                val safe = card.name.replace(Regex("[\\\\/:*?\"<>|]+"), "").replace(Regex("\\s+"), " ").trim().ifEmpty { "generus" }
+                val file = withContext(Dispatchers.Default) {
+                    val bmp = if (kind == "kartu") renderer.bitmap(card, 1080) else renderer.qrBitmap(card)
+                    Share.file(context, "${if (kind == "kartu") "Kartu" else "QR"} - $safe.png").also { f ->
+                        f.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                    }
+                }
+                Share.send(context, file, "image/png", "Simpan / bagikan gambar")
+            } catch (e: Throwable) {
+                toast("Gagal membuat gambar.")
+            } finally {
+                pngBusy = null
+            }
+        }
+    }
+
     AppScreen("Kartu QR", onBack = { nav.popBackStack() }) { p ->
         RefreshableList(refreshing = loading && cards != null, onRefresh = model::fetch, padding = p) {
             item {
@@ -146,15 +174,7 @@ fun KartuScreen(nav: NavHostController, unitId: String?, generusId: String?) {
                 )
             }
             if (generusId == null) item {
-                SelectField(
-                    "Wilayah",
-                    units,
-                    units.firstOrNull { it.id == selected },
-                    { if (it.level == UnitLevel.desa) "Seluruh Desa ${it.name}" else "Kelompok ${it.name}" },
-                    model::select,
-                    group = { "Desa ${it.desaName}" },
-                    placeholder = "Pilih desa / kelompok",
-                )
+                UnitPickerField("Wilayah", units, selected, model::select, placeholder = "Pilih desa / kelompok")
             }
             val list = cards
             when {
@@ -168,6 +188,10 @@ fun KartuScreen(nav: NavHostController, unitId: String?, generusId: String?) {
                             Text("${list.size} kartu · ${(list.size + IdCards.PER_SHEET - 1) / IdCards.PER_SHEET} lembar", style = MaterialTheme.typography.titleSmall)
                             if (list.size >= MAX_CARDS) InfoBanner("Maksimal $MAX_CARDS kartu sekali cetak; pilih wilayah lebih kecil.")
                             PrimaryButton("Buat PDF & bagikan", onClick = { exportPdf(list) }, loading = exporting, icon = Icons.Rounded.PictureAsPdf, modifier = Modifier.fillMaxWidth())
+                            if (list.size == 1) {
+                                SecondaryButton(if (pngBusy == "kartu") "Membuat gambar…" else "Unduh kartu (PNG)", onClick = { exportPng(list.first(), "kartu") }, enabled = pngBusy == null, icon = Icons.Rounded.Image, modifier = Modifier.fillMaxWidth())
+                                SecondaryButton(if (pngBusy == "qr") "Membuat gambar…" else "Unduh QR (PNG)", onClick = { exportPng(list.first(), "qr") }, enabled = pngBusy == null, icon = Icons.Rounded.QrCode2, modifier = Modifier.fillMaxWidth())
+                            }
                         }
                     }
                     // Satu kartu per baris, ukuran nyaman dibaca (seperti pratinjau PWA di HP).

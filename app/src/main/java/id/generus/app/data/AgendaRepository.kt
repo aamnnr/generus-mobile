@@ -1,5 +1,9 @@
 package id.generus.app.data
 
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.async
+import io.github.jan.supabase.postgrest.query.Count
 import id.generus.app.core.APP_ZONE
 import id.generus.app.data.model.AgendaDetail
 import id.generus.app.data.model.AgendaPage
@@ -36,12 +40,49 @@ class AgendaRepository(private val client: SupabaseClient) {
 
     suspend fun detail(id: String): AgendaDetail? = client.rpc("mobile_agenda", buildJsonObject { put("p_id", id) })
 
+    /** Detail + ringkasan presensi per kelompok, tanpa daftar nama (agenda besar tetap ringan). */
+    suspend fun detailSummary(id: String): AgendaDetail? = client.rpc("mobile_agenda_detail", buildJsonObject { put("p_id", id) })
+
+    /** Peserta satu kelompok, atau hasil pencarian nama lintas kelompok (padanan getRoster + RosterFilter). */
+    suspend fun peserta(agendaId: String, kelompokId: String? = null, q: String? = null, limit: Int? = null): List<id.generus.app.data.model.RosterRow> =
+        client.rpc(
+            "mobile_agenda_peserta",
+            buildJsonObject {
+                put("p_agenda", agendaId)
+                put("p_kelompok", kelompokId)
+                put("p_q", q?.trim()?.ifEmpty { null })
+                put("p_limit", limit)
+            },
+        )
+
     suspend fun units(): List<AgendaUnit> = client.rpc("mobile_agenda_units")
 
-    suspend fun jenjang(): List<Jenjang> =
+    /**
+     * Daftar jenjang & kategorinya, urut. `kegiatan = true` = hanya jenjang yang ikut kegiatan
+     * (sasaran agenda, target, capaian); tanpa itu = semua (data generus). Padanan listJenjang.
+     */
+    suspend fun jenjang(kegiatan: Boolean = false): List<Jenjang> =
         client.from("jenjang")
-            .select(Columns.raw("id,name,sort_order,jenjang_kategori(id,name,sort_order)")) { order("sort_order", Order.ASCENDING) }
-            .decodeList()
+            .select(Columns.raw("*,jenjang_kategori(id,name,sort_order)")) { order("sort_order", Order.ASCENDING) }
+            .decodeList<Jenjang>()
+            .filter { !kegiatan || it.ikutKegiatan }
+
+    /** Jumlah generus aktif per jenjang (termasuk yang kosong), dalam lingkup RLS pemanggil. */
+    suspend fun countPerJenjang(): List<id.generus.app.data.model.JenjangCount> = coroutineScope {
+        jenjang().map { j ->
+            async {
+                val n = client.from("generus").select {
+                    head = true
+                    count(Count.EXACT)
+                    filter {
+                        eq("jenjang_id", j.id)
+                        eq("status", "aktif")
+                    }
+                }.countOrNull() ?: 0L
+                id.generus.app.data.model.JenjangCount(j.name, n.toInt())
+            }
+        }.awaitAll()
+    }
 
     /** Simpan satu atau beberapa agenda (berulang mingguan); mengembalikan id agenda pertama. */
     suspend fun create(rows: List<AgendaWrite>): String =
